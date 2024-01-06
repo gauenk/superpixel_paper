@@ -14,7 +14,7 @@ from natten import NeighborhoodAttention2D
 def create_model(args):
     args = edict(vars(args))
     pairs = {"topk":None,"use_local":True,"use_intra":True,"use_inter":True,
-             "use_nat":False,"nat_ksize":7,
+             "use_nat":False,"nat_ksize":7,"use_conv":False,
              "softmax_order":"v0","base_first":False,"intra_version":"v1",
              "use_ffn":True}
     extract(args,pairs)
@@ -25,6 +25,7 @@ def create_model(args):
                 upscale=args.upscale, M=args.M, use_local=args.use_local,
                 use_inter=args.use_inter, use_intra=args.use_intra,
                 use_nat=args.use_nat,nat_ksize=args.nat_ksize,
+                use_conv=args.use_conv,
                 affinity_softmax=args.affinity_softmax,topk=args.topk,
                 softmax_order=args.softmax_order,base_first=args.base_first,
                 intra_version=args.intra_version,use_ffn=args.use_ffn)
@@ -33,7 +34,7 @@ class SPIN(nn.Module):
     def __init__(self, colors=3, dim=40, block_num=8, heads=1, qk_dim=24, mlp_dim=72,
                  stoken_size=[12, 16, 20, 24, 12, 16, 20, 24], upscale=3,
                  M=0., use_local=True, use_inter=True, use_intra=True,
-                 use_nat=False, nat_ksize=7,
+                 use_nat=False, nat_ksize=7, use_conv=False,
                  affinity_softmax=1.,topk=None,softmax_order="v0",
                  base_first=False,intra_version="v1",use_ffn=True):
         super(SPIN, self).__init__()
@@ -54,6 +55,7 @@ class SPIN(nn.Module):
                                      M=M, use_local=use_local,
                                      use_inter=use_inter, use_intra=use_intra,
                                      use_nat=use_nat,nat_ksize=nat_ksize,
+                                     use_conv=use_conv,
                                      affinity_softmax=affinity_softmax,topk=topk,
                                      softmax_order=softmax_order,
                                      intra_version=intra_version,use_ffn=use_ffn))
@@ -672,7 +674,7 @@ class Block(nn.Module):
     """
     def __init__(self, dim, layer_num, stoken_size, heads, qk_dim, mlp_dim,
                  M=0., use_local=True, use_inter=True, use_intra=True,
-                 use_nat=False, nat_ksize=7,
+                 use_nat=False, nat_ksize=7, use_conv=False,
                  affinity_softmax=1., topk=None, softmax_order="v0",
                  intra_version="v1",use_ffn=True):
         super(Block,self).__init__()
@@ -683,8 +685,9 @@ class Block(nn.Module):
         self.use_intra = use_intra
         self.use_local = use_local
         self.use_nat = use_nat
+        self.use_conv = use_conv
         self.use_ffn = use_ffn
-        if topk is None: topk = (stoken_size[0]**2)
+        if topk is None or topk == -1: topk = (stoken_size[0]**2)
 
         if self.use_inter:
             if use_ffn: ffn_l = FFN(dim, mlp_dim, dim)
@@ -719,6 +722,11 @@ class Block(nn.Module):
         else:
             self.local_layer = nn.Identity()
 
+        if self.use_conv:
+            self.conv_layer = nn.Conv2d(dim, dim, 3, 1, 1)
+        else:
+            self.conv_layer = nn.Identity()
+
         if self.use_nat:
             self.nat_layer = NeighborhoodAttention2D(dim=dim, kernel_size=nat_ksize,
                                                      dilation=1, num_heads=heads)
@@ -744,6 +752,9 @@ class Block(nn.Module):
             local_attn, local_ff = self.local_layer
             x = local_attn(x) + x
             if self.use_ffn: x = local_ff(x) + x
+
+        if self.use_conv:
+            x = self.conv_layer(x)
 
         if self.use_nat:
             from einops import rearrange

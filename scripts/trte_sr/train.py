@@ -32,6 +32,10 @@ def main():
                                            update=True)
     print("Num Exps: ",len(exps))
     print(uuids)
+    # print(exps)
+    # for e in exps:
+    #     print(e.spa_version,e.topk)
+    # exit()
 
     # -- run exps --
     results = cache_io.run_exps(exps,train.run,uuids=uuids,preset_uuids=True,

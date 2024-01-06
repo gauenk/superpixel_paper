@@ -27,6 +27,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR, StepLR
 # from spin.datas.utils import create_datasets
 from superpixel_paper.sr_datas.utils import create_datasets
+from .share import config_via_spa
 
 
 # parser = argparse.ArgumentParser(description='SPIN')
@@ -72,6 +73,7 @@ def run(cfg):
 
     # -- fill missing with defaults --
     cfg = extract_defaults(cfg)
+    config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
     resume_uuid = cfg.tr_uuid if cfg.resume_uuid is None else cfg.resume_uuid
     if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoints" / resume_uuid

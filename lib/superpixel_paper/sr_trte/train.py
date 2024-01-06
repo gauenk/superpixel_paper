@@ -13,6 +13,7 @@ import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
 from pathlib import Path
+from .share import config_via_spa
 
 # parser = argparse.ArgumentParser(description='SPIN')
 # ## yaml configuration files
@@ -86,6 +87,7 @@ def run(cfg):
 
     # -- fill missing with defaults --
     cfg = extract_defaults(cfg)
+    config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
     if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoint" / resume_uuid
@@ -187,7 +189,7 @@ def run(cfg):
 
     ## start training
     timer_start = time.time()
-    for epoch in range(start_epoch, cfg.epochs+1):
+    for epoch in range(start_epoch, cfg.nepochs+1):
         epoch_loss = 0.0
         stat_dict['epochs'] = epoch
         model = model.train()
@@ -213,7 +215,7 @@ def run(cfg):
                 fill_width = math.ceil(math.log10(total_steps))
                 cur_steps = str(cur_steps).zfill(fill_width)
 
-                epoch_width = math.ceil(math.log10(cfg.epochs))
+                epoch_width = math.ceil(math.log10(cfg.nepochs))
                 cur_epoch = str(epoch).zfill(epoch_width)
 
                 avg_loss = epoch_loss / (iter + 1)
@@ -294,7 +296,7 @@ def run(cfg):
             print(test_log)
             sys.stdout.flush()
             # save model
-            model_str = '{}-epoch={}.ckpt'.format(cfg.uuid,epoch)
+            model_str = '%s-epoch=%02d.ckpt'%(cfg.uuid,epoch-1) # "start at 0"
             saved_model_path = os.path.join(chkpt_path,model_str)
             # torch.save(model.state_dict(), saved_model_path)
             torch.save({
@@ -308,10 +310,18 @@ def run(cfg):
             # save stat dict
             ## save training paramters
             # stat_dict_name = os.path.join(experiment_path, 'stat_dict.yml')
-            # stat_dict_name = os.path.join(chkpt_path, 'stat_dict_%d.yml' % epoch)
-            # with open(stat_dict_name, 'w') as stat_dict_file:
-            #     yaml.dump(stat_dict, stat_dict_file, default_flow_style=False)
+            stat_dict_name = os.path.join(logging_path, 'stat_dict_%d.yml' % epoch)
+            with open(stat_dict_name, 'w') as stat_dict_file:
+                yaml.dump(stat_dict, stat_dict_file, default_flow_style=False)
 
         ## update scheduler
         scheduler.step()
-    return {}
+
+    # -- return info --
+    info = edict()
+    # print(stat_dict)
+    for valid_dataloader in valid_dataloaders:
+        name = valid_dataloader['name']
+        info["%s_best_psnrs"%name] = stat_dict[name]['best_psnr']['value']
+        info["%s_best_ssim"%name] = stat_dict[name]['best_ssim']['value']
+    return info

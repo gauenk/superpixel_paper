@@ -42,10 +42,16 @@ def main():
                                 version="v1",skip_loop=False,clear_fxn=clear_fxn,
                                 clear=False,enable_dispatch="slurm",
                                 records_fn=".cache_io_pkl/trte_sr/test.pkl",
-                                records_reload=True,use_wandb=False,
+                                records_reload=False,use_wandb=False,
                                 proj_name="superpixels_sr_test")
 
-    print(results)
+    # print(results.columns)
+    for spa,sdf in results.groupby("spa_version"):
+        print("SPA: ",spa)
+        # print(sdf[['dname','name','topk','psnrs','ssims']])
+        for dname,ddf in sdf.groupby("dname"):
+            print("[%s]: %2.2f,%0.3f" % (dname,ddf['psnrs'].mean(),ddf['ssims'].mean()))
+
 
 if __name__ == "__main__":
     main()

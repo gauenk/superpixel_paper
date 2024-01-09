@@ -13,7 +13,7 @@ import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
 from pathlib import Path
-#from .share import config_via_spa
+# from .share import config_via_spa
 from ..spa_config import config_via_spa
 
 
@@ -76,12 +76,12 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[0]","threads":4,"model":"spin",
+        "gpu_ids":"[1]","threads":4,"model":"spin",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/sr/train/","resume_uuid":None,"resume_flag":False}
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
 
@@ -108,7 +108,8 @@ def run(cfg):
     import torch.nn as nn
     import torch.nn.functional as F
     from torch.optim.lr_scheduler import MultiStepLR, StepLR
-    from superpixel_paper.sr_datas.utils import create_datasets
+    # from superpixel_paper.sr_datas.utils import create_datasets
+    from .get_train_valid_loader import get_train_valid_loader,get_test_loader
 
     ## select active gpu devices
     device = None
@@ -123,7 +124,7 @@ def run(cfg):
     torch.set_num_threads(cfg.threads)
 
     ## create dataset for training and validating
-    train_dataloader, valid_dataloaders = create_datasets(cfg)
+    # train_dataloader, valid_dataloaders = create_datasets(cfg)
 
     ## definitions of model
     try:

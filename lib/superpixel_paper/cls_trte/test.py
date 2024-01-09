@@ -16,7 +16,6 @@ from pathlib import Path
 from easydict import EasyDict as edict
 from dev_basics.utils.misc import set_seed
 
-import torchvision.transforms.functional as F
 import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
@@ -59,15 +58,15 @@ def extract_defaults(_cfg):
         "heads":1,"M":0.,"use_local":False,"use_inter":False,
         "use_intra":True,"use_fnn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
-        "data_path":"./data/sr/","data_augment":False,
+        "data_path":"./data/sr/","data_augment":False,"seed":123,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
         "gpu_ids":"[0]","threads":4,"model":"spin",
         "decays":[],"gamma":0.5,"lr":0.0001,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
-        "upscale":2,"epochs":50,"denoise":False,"seed":123,"with_sigma":False,
+        "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/sr/train/","resume_uuid":None,"resume_flag":True,
-        "output_folder":"output/sr/test","save_output":False}
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
+        "output_folder":"output/deno/test","save_output":False}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
 
@@ -82,11 +81,11 @@ def run(cfg):
     else: cfg.resume = None
     set_seed(cfg.seed)
     ## set visibel gpu
-    gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
-    gpu_ids_str = "2"
-    # gpu_ids_str = "0"
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
+    # gpu_ids_str = "2"
+    # # gpu_ids_str = "0"
+    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
     test_epoch = int(cfg.pretrained_path.split("=")[-1].split(".")[0])
     out_base = "%s/epoch=%02d" %(cfg.tr_uuid,test_epoch)
     output_folder = Path(cfg.output_folder) / out_base
@@ -98,7 +97,7 @@ def run(cfg):
 
     # -- chunking for validation --
     chunk_cfg = edict()
-    chunk_cfg.spatial_chunk_size = 96
+    chunk_cfg.spatial_chunk_size = 256
     chunk_cfg.spatial_chunk_sr = cfg.upscale
     chunk_cfg.spatial_chunk_overlap = 0.25
 
@@ -161,7 +160,7 @@ def run(cfg):
         fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
         def forward(_sample):
             with th.no_grad():
-                sr = fwd_fxn(_sample[:,None])[:,0]
+               sr = fwd_fxn(_sample[:,None])[:,0]
             # run = lambda fxn: fxn(sr).item()
             # print("[min,max,mean]: ",run(th.min),run(th.max),run(th.mean))
             # print("sr,lr [shapes]: ",sr.shape,lr.shape)
@@ -175,25 +174,20 @@ def run(cfg):
             count += 1
             if cfg.denoise:
                 lr = hr + cfg.sigma*th.randn_like(hr)
-            if not(cfg.denoise) and cfg.with_sigma:
-                lr = lr + cfg.sigma*th.randn_like(lr)
             lr, hr = lr.to(device), hr.to(device)
             # print("lr.shape: ",lr.shape)
             torch.cuda.empty_cache()
             # lr = lr[...,:300,:300]
             # hr = hr[...,:300*cfg.upscale,:300*cfg.upscale]
-            # lr = lr[...,:300,:300]
-            # hr = hr[...,:300*cfg.upscale,:300*cfg.upscale]
-            # torchvision.transforms.functional.
-            # lr = F.center_crop(lr,(300,300))
-            # hr = F.center_crop(hr,(300*cfg.upscale,300*cfg.upscale)
             # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
             with th.no_grad():
-                # sr = forward(lr)
-                sr = model(lr)
+                sr = forward(lr)
+                # sr = model(lr)
             # quantize output to [0, 255]
             hr = hr.clamp(0, 255)
             sr = sr.clamp(0, 255)
+            # print("hr.shape: ",hr.shape,sr.shape,lr.shape)
+            # exit()
 
             out_img = sr.detach()[0].float().cpu().numpy()
             out_img = np.transpose(out_img, (1, 2, 0))
@@ -203,7 +197,9 @@ def run(cfg):
                 os.makedirs(output_name)
             output_name = os.path.join(output_name,
                                          str(count) + '_x' + str(cfg.upscale) + '.png')
+
             if cfg.save_output:
+                print(output_name)
                 cv2.imwrite(output_name, out_img[:, :, [2, 1, 0]]) #
 
             # conver to ycbcr
@@ -261,6 +257,5 @@ def run(cfg):
     # #     info.to_csv(".tmp/results.csv",index=False)
     # print(info.to_dict(orient="records"))
     # exit()
-    info = info.rename(columns={"name":"iname"})
 
     return info.to_dict(orient="records")

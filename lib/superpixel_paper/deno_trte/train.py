@@ -13,9 +13,7 @@ import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
 from pathlib import Path
-#from .share import config_via_spa
 from ..spa_config import config_via_spa
-
 
 # parser = argparse.ArgumentParser(description='SPIN')
 # ## yaml configuration files
@@ -76,12 +74,12 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[0]","threads":4,"model":"spin",
+        "gpu_ids":"[1]","threads":4,"model":"spin",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/sr/train/","resume_uuid":None,"resume_flag":False}
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
 
@@ -250,6 +248,9 @@ def run(cfg):
                     if cfg.denoise:
                         lr = hr + cfg.sigma*th.randn_like(hr)
                     lr, hr = lr.to(device), hr.to(device)
+                    if cfg.topk > 600:
+                        lr = lr[:,:,:256]
+                        hr = hr[:,:,:cfg.upscale*256]
                     torch.cuda.empty_cache()
                     # sr = forward(lr)
                     # print("lr.shape,hr.shape: ",lr.shape,hr.shape)

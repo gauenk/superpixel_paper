@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 # -- testing --
-from superpixel_paper.sr_trte import train
+from superpixel_paper.cls_trte import train
 
 # -- caching results --
 import cache_io
@@ -27,26 +27,26 @@ def main():
 
     # -- get experiments --
     def clear_fxn(num,cfg): return False
-    exps,uuids = cache_io.train_stages.run("exps/trte_sr/train.cfg",
-                                           ".cache_io_exps/trte_sr/train/",
+    exps,uuids = cache_io.train_stages.run("exps/trte_cls/train.cfg",
+                                           ".cache_io_exps/trte_cls/train/",
                                            update=True)
     print("Num Exps: ",len(exps))
     print(uuids)
-    exps = list(reversed(exps))
-    uuids = list(reversed(uuids))
+    # exps = list(reversed(exps))
+    # uuids = list(reversed(uuids))
     # print(exps)
     # for e in exps:
-    #     print(e.spa_version,e.topk)
+    #     print(e.spa_version,e.topk,e.sigma)
     # exit()
 
     # -- run exps --
     results = cache_io.run_exps(exps,train.run,uuids=uuids,preset_uuids=True,
-                                name=".cache_io/trte_sr/train",
+                                name=".cache_io/trte_cls/train",
                                 version="v1",skip_loop=False,clear_fxn=clear_fxn,
                                 clear=False,enable_dispatch="slurm",
-                                records_fn=".cache_io_pkl/trte_sr/train.pkl",
+                                records_fn=".cache_io_pkl/trte_cls/train.pkl",
                                 records_reload=False,use_wandb=False,
-                                proj_name="superpixels_sr_train")
+                                proj_name="superpixels_cls_train")
 
 
 

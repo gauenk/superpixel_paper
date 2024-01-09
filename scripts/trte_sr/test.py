@@ -42,7 +42,7 @@ def main():
                                 version="v1",skip_loop=False,clear_fxn=clear_fxn,
                                 clear=False,enable_dispatch="slurm",
                                 records_fn=".cache_io_pkl/trte_sr/test.pkl",
-                                records_reload=False,use_wandb=False,
+                                records_reload=True,use_wandb=False,
                                 proj_name="superpixels_sr_test")
 
     # print(results.columns)
@@ -50,7 +50,9 @@ def main():
         print("SPA: ",spa)
         # print(sdf[['dname','name','topk','psnrs','ssims']])
         for dname,ddf in sdf.groupby("dname"):
+            # if dname != "set5": continue
             print("[%s]: %2.2f,%0.3f" % (dname,ddf['psnrs'].mean(),ddf['ssims'].mean()))
+            # print(ddf[['name','topk','psnrs','ssims']])
 
 
 if __name__ == "__main__":

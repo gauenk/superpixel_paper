@@ -13,6 +13,7 @@ import sys
 import site
 import glob
 
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 # -- file paths --
 long_description="""Code for publication"""
@@ -29,4 +30,16 @@ setup(
     install_requires=[],
     package_dir={"": "lib"},
     packages=find_packages("lib"),
+    package_data={'': ['*.so']},
+    include_package_data=True,
+    ext_modules=[
+        CUDAExtension('eff_normz_cuda', [
+            # -- search --
+            # 'lib/superpixel_paper/sr_models/pair_wise_distance_cuda_source.cu',
+            'lib/superpixel_paper/sr_models/eff_normz_cuda_source.cu',
+        ],
+                      extra_compile_args={'cxx': ['-g','-w'],
+                                          'nvcc': ['-O2','-w']})
+    ],
+    cmdclass={'build_ext': BuildExtension},
 )

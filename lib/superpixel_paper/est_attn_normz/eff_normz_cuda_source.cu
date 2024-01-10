@@ -114,6 +114,10 @@ __global__ void eff_backward_kernel(
     int pk = tmp % psize;
     if ((si >= nsamples) or (pi >= psize) or (pj >= psize) or (pk >= psize)){ return; }
 
+    //
+    // -- Compute the Estimate for (i,j) --
+    //
+
     // -- accumulate --
     scalar_t acc = 0;
     for (int pn=0;pn<psize;pn++){
@@ -123,24 +127,29 @@ __global__ void eff_backward_kernel(
       acc += attn[bi][hi][spi][pi][pn]*samples[bi][spi][pn][si];
     }
 
-    // -- init output --
+    // -- doesn't use samples --
     acc += attn[bi][hi][spi][pi][pi];
     if (pi != pj){
       acc += attn[bi][hi][spi][pi][pj];
     }
 
-    // -- square it --
-    scalar_t grad_weight = acc*acc;
-
-    // -- accumulate average into (pi,pj) --
+    // -- handle indicator function for k \neq i,j --
+    bool zero_grad = false;
     if ((pk != pi) or (pk != pj)){
-      if (samples[bi][spi][pk][si] == 1){
-        acc = normz_grad[bi][hi][spi][pi][pj]/grad_weight;
-      }else{
-        acc = 0;
+      if (samples[bi][spi][pk][si] == 0){
+        zero_grad = true;
       }
     }
-    atomicAdd(&attn_grad[bi][hi][spi][pi][pk],acc);
+    acc = zero_grad ? 0 : -normz_grad[bi][hi][spi][pi][pj]/(acc*acc);
+    // acc = normz_grad[bi][hi][spi][pi][pj];
+
+    //
+    // -- Accumulate at (i,k) --
+    //
+
+    // -- accumulate in attention --
+    atomicAdd(&attn_grad[bi][hi][spi][pi][pk],acc/nsamples);
+    // atomicAdd(&attn_grad[bi][hi][spi][pi][pk],1);
 
 }
 

@@ -6,16 +6,12 @@ import eff_normz_cuda
 class EffNormzFunction(torch.autograd.Function):
 
     @staticmethod
-    def forward(self, attn, sims, nsamples):
+    # def forward(self, attn, sims, nsamples):
+    def forward(self, attn, samples):
 
         # -- unpack --
         B,HD,K,P0,_ = attn.shape
         attn = attn.contiguous()
-
-        # -- sampling --
-        # sims.shape = B,K,nPixels
-        sims = sims[...,None].expand(-1,-1,-1,nsamples)
-        samples = th.bernoulli(sims)
 
         # -- allocate --
         normz = th.zeros_like(attn)
@@ -35,7 +31,7 @@ class EffNormzFunction(torch.autograd.Function):
         samples,attn = self.saved_tensors
 
         # -- allocate --
-        attn_grad = th.zeros_like(normz_grad)
+        attn_grad = th.zeros_like(attn)#normz_grad)
 
         # -- backward --
         eff_normz_cuda.eff_backward(attn_grad,normz_grad.contiguous(),attn,samples)

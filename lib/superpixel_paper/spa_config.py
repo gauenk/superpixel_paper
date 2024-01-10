@@ -19,7 +19,18 @@ def config_via_spa(cfg):
         pairs = {"spa2_normz":None,
                  "spa2_kweight":True,
                  "spa2_oweight":True}
+        for key,val in pairs.items():
+            if key in cfg: continue
+            cfg[key] = val
         cfg.intra_version = "v4"
+    elif spa == "sampled":
+        cfg.intra_version = "v5"
+        pairs = {"spa2_normz":"mask",
+                 "spa2_kweight":False,
+                 "spa2_oweight":False}
+        for key,val in pairs.items():
+            if key in cfg: continue
+            cfg[key] = val
     elif spa == "flex":
         cfg.intra_version = "v2"
     elif spa == "aspa":

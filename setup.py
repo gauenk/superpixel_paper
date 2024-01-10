@@ -36,7 +36,8 @@ setup(
         CUDAExtension('eff_normz_cuda', [
             # -- search --
             # 'lib/superpixel_paper/sr_models/pair_wise_distance_cuda_source.cu',
-            'lib/superpixel_paper/sr_models/eff_normz_cuda_source.cu',
+            # 'lib/superpixel_paper/sr_models/eff_normz_cuda_source.cu',
+            'lib/superpixel_paper/est_attn_normz/eff_normz_cuda_source.cu',
         ],
                       extra_compile_args={'cxx': ['-g','-w'],
                                           'nvcc': ['-O2','-w']})

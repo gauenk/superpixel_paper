@@ -5,7 +5,8 @@ import torch.nn.functional as F
 
 import math
 from einops import rearrange
-from .eff_normz import run as eff_normz_run
+# from .eff_normz import run as eff_normz_run
+from superpixel_paper.est_attn_normz import EffNormzFunction
 
 from spin.models.pair_wise_distance import PairwiseDistFunction
 
@@ -595,7 +596,8 @@ class SPIntraAttModuleV3(nn.Module):
         head_dim = self.qk_dim // self.num_heads
         self.scale = qk_scale or head_dim ** -0.5
 
-    def forward(self, x, affinity_matrix, num_spixels):
+    def forward(self, x, affinity_matrix, num_spixels,
+                sims=None, indices=None, labels=None):
         B, C, H, W = x.shape
 
         # calculate v
@@ -605,10 +607,13 @@ class SPIntraAttModuleV3(nn.Module):
 
         # -- sample superpixel --
         # superpixels' pixel selection; K = # of superpixels
-        sims, indices = torch.topk(affinity_matrix, self.topk, dim=-1) # B, K, topk
+        if (sims is None):
+            assert indices is None
+            assert labels is None
+            sims, indices = torch.topk(affinity_matrix, self.topk, dim=-1) # B, K, topk
+            _,labels = torch.topk(affinity_matrix.detach(),1,dim=-2)
 
         # -- get mask --
-        _,labels = torch.topk(affinity_matrix.detach(),1,dim=-2)
         K = indices.shape[1] # number of superpixels
         lids = th.arange(K).to(indices.device).reshape(1,K,1).expand_as(indices)
         labels = th.gather(labels.expand(-1,K,-1),-1,indices)
@@ -654,6 +659,40 @@ class SPIntraAttModuleV3(nn.Module):
 
         return out
 
+class SPIntraAttModuleV5(nn.Module):
+    def __init__(self, exact_attn, nsamples=30, topk=32):
+        super().__init__()
+        self.exact_attn = exact_attn
+        self.nsamples = nsamples
+        self.topk = topk
+
+    def forward(self, x, amatrix, num_spixels):
+
+        # -- unpack --
+        nsamples = self.nsamples
+        B = x.shape[0]
+
+        # -- prepare --
+        sims, indices = torch.topk(amatrix, self.topk, dim=-1) # B, K, topk
+        amatrix = rearrange(amatrix,'b s k -> (b s) k')
+
+        # -- first sample --
+        # _,labels = torch.topk(amatrix.detach(),1,dim=-2)
+        labels = th.multinomial(amatrix.T,num_samples=1)
+        labels = rearrange(labels,'(b s) k -> b k s',b=B)
+        out = self.exact_attn(x, amatrix, num_spixels,
+                              sims=sims, indices=indices, labels=labels)/nsamples
+
+        # -- compute average --
+        for _ in range(self.nsamples-1):
+
+            # -- samples --
+            labels = th.multinomial(amatrix.T,num_samples=1)
+            labels = rearrange(labels,'(b s) k -> b k s',b=B)
+            out += self.exact_attn(x, amatrix, num_spixels,
+                                   sims=sims, indices=indices, labels=labels)/nsamples
+        return out
+
 class SPIntraAttModuleV4(nn.Module):
     def __init__(self, dim, num_heads, qk_dim, topk=32,
                  qkv_bias=False, qk_scale=None, attn_drop=0.,
@@ -662,7 +701,7 @@ class SPIntraAttModuleV4(nn.Module):
         self.dim = dim
         self.qk_dim = qk_dim
         self.num_heads = num_heads
-        self.nsamples = 10
+        self.nsamples = 50
 
         self.topk = topk
 
@@ -681,16 +720,11 @@ class SPIntraAttModuleV4(nn.Module):
 
     def estimate_normz(self,attn,sims):
         assert attn.shape[2] == 1,"Num heads is 1 to keep life easy."
-        N = self.nsamples
-        sample_mask = th.bernoulli(sims[...,None].expand(-1,-1,-1,N))
-        normz = eff_normz_run(attn[:,:,0],sample_mask)[...,None,:,:]
-        # print(attn.norm().item())
+        normz = EffNormzFunction.apply(attn,sims,self.nsamples)
         if th.any(normz==0):
             print(attn)
             print(normz)
         assert th.all(normz>0).item(),"Must be nz"
-        # print(normz)
-        # exit()
         return normz
 
     def forward(self, x, affinity_matrix, num_spixels):
@@ -730,7 +764,7 @@ class SPIntraAttModuleV4(nn.Module):
         normz = self.estimate_normz(attn,sims)
         # normz = th.ones_like(attn)
         # print("attn.shape: ",attn.shape,normz.shape)
-        attn = attn/normz
+        attn = attn*normz
         # attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
@@ -915,7 +949,7 @@ class Block(nn.Module):
 
         if topk is None or topk == -1: topk = (stoken_size[0]**2)
         if self.use_intra:
-            assert intra_version in ["v1","v2","v3","v4"]
+            assert intra_version in ["v1","v2","v3","v4","v5"]
             if intra_version == "v1":
                 intra_l = SPIntraAttModule(dim, heads, qk_dim, topk=topk)
             elif intra_version == "v2":
@@ -935,6 +969,14 @@ class Block(nn.Module):
                                              normz=spa2_normz,
                                              kweight=spa2_kweight,
                                              out_weight=spa2_oweight)
+            elif intra_version == "v5": # sampling
+                exact = SPIntraAttModuleV3(dim, heads, qk_dim,
+                                           topk=topk, qk_scale=spa_scale,
+                                           normz=spa2_normz,
+                                           kweight=spa2_kweight,
+                                           out_weight=spa2_oweight)
+                nsamples = 30
+                intra_l = SPIntraAttModuleV5(exact,nsamples,topk)
             if use_ffn: ffn_l = FFN(dim, mlp_dim, dim)
             else: ffn_l = nn.Identity()
             self.intra_layer = nn.ModuleList([

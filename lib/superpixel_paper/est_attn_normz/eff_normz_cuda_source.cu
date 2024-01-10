@@ -135,7 +135,7 @@ __global__ void eff_backward_kernel(
 
     // -- handle indicator function for k \neq i,j --
     bool zero_grad = false;
-    if ((pk != pi) or (pk != pj)){
+    if ((pk != pi) and (pk != pj)){
       if (samples[bi][spi][pk][si] == 0){
         zero_grad = true;
       }

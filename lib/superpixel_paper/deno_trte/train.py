@@ -74,7 +74,7 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[1]","threads":4,"model":"spin",
+        "gpu_ids":"[1]","threads":4,"model":"model",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
@@ -125,7 +125,7 @@ def run(cfg):
 
     ## definitions of model
     try:
-        import_str = 'superpixel_paper.sr_models.{}'.format(cfg.model)
+        import_str = 'superpixel_paper.models.{}'.format(cfg.model)
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')
@@ -205,11 +205,12 @@ def run(cfg):
             lr, hr = lr.to(device), hr.to(device)
             # lr = add_noise(lr,args)
             sr = model(lr)
-            loss = loss_func(sr, hr)
+            eps = 1e-3
+            loss = th.sqrt(th.mean((sr-hr)**2)+eps**2)
+            # loss_func(sr, hr)
             loss.backward()
             optimizer.step()
             epoch_loss += float(loss)
-
             if (iter + 1) % cfg.log_every == 0:
                 cur_steps = (iter + 1) * cfg.batch_size
                 total_steps = len(train_dataloader.dataset)
@@ -230,6 +231,7 @@ def run(cfg):
 
         # import pdb; pdb.set_trace()
         if epoch % cfg.test_every == 0:
+            torch.cuda.empty_cache()
             torch.set_grad_enabled(False)
             test_log = ''
             model = model.eval()

@@ -20,7 +20,8 @@ def create_model(args):
              "use_nat":False,"nat_ksize":7,"use_conv":False,
              "softmax_order":"v0","base_first":False,"intra_version":"v1",
              "use_ffn":True,"spa_scale":None,
-             "spa2_normz":False,"spa2_kweight":True,"spa2_oweight":True}
+             "spa2_normz":False,"spa2_kweight":True,"spa2_oweight":True,
+             "spa2_nsamples":30}
     extract(args,pairs)
     print([args[k] for k in pairs])
     return SPIN(colors=args.colors, dim=args.dim, block_num=args.block_num,
@@ -34,7 +35,8 @@ def create_model(args):
                 softmax_order=args.softmax_order,base_first=args.base_first,
                 intra_version=args.intra_version,use_ffn=args.use_ffn,
                 spa2_normz=args.spa2_normz,spa2_kweight=args.spa2_kweight,
-                spa2_oweight=args.spa2_oweight,spa_scale=args.spa_scale)
+                spa2_oweight=args.spa2_oweight,spa_scale=args.spa_scale,
+                spa2_nsamples=args.spa2_nsamples)
 
 class SPIN(nn.Module):
     def __init__(self, colors=3, dim=40, block_num=8, heads=1, qk_dim=24, mlp_dim=72,
@@ -44,7 +46,7 @@ class SPIN(nn.Module):
                  affinity_softmax=1.,topk=None,softmax_order="v0",
                  base_first=False,intra_version="v1",use_ffn=True,
                  spa2_normz=False,spa2_kweight=True,spa2_oweight=True,
-                 spa_scale=None):
+                 spa_scale=None,spa2_nsamples=30):
         super(SPIN, self).__init__()
 
         # -- simplify stoken_size specification --
@@ -75,7 +77,8 @@ class SPIN(nn.Module):
                                      softmax_order=softmax_order,
                                      intra_version=intra_version,use_ffn=use_ffn,
                                      spa2_normz=spa2_normz,spa2_kweight=spa2_kweight,
-                                     spa2_oweight=spa2_oweight,spa_scale=spa_scale))
+                                     spa2_oweight=spa2_oweight,spa_scale=spa_scale,
+                                     spa2_nsamples=spa2_nsamples))
             self.mid_convs.append(nn.Conv2d(dim, dim, 3, 1, 1))
 
         if upscale == 4:
@@ -548,7 +551,7 @@ class SPIntraAttModuleV2(nn.Module):
 def weighted_scatter_mean(tgt, weight, mask, dim, indices, src ,normz=False):
     count = torch.ones_like(tgt)
     new_src = torch.scatter_add(tgt, dim, indices, src)
-    if not(normz is False):
+    if not(normz is False) and not(normz is None):
         if (normz is True) or (normz == "default"):
             new_count = torch.scatter_add(count, dim, indices, weight)
             new_src /= new_count
@@ -696,12 +699,12 @@ class SPIntraAttModuleV5(nn.Module):
 class SPIntraAttModuleV4(nn.Module):
     def __init__(self, dim, num_heads, qk_dim, topk=32,
                  qkv_bias=False, qk_scale=None, attn_drop=0.,
-                 normz=False,kweight=True,out_weight=True):
+                 normz=False,kweight=True,out_weight=True,nsamples=30):
         super().__init__()
         self.dim = dim
         self.qk_dim = qk_dim
         self.num_heads = num_heads
-        self.nsamples = 50
+        self.nsamples = nsamples
 
         self.topk = topk
 
@@ -720,7 +723,10 @@ class SPIntraAttModuleV4(nn.Module):
 
     def estimate_normz(self,attn,sims):
         assert attn.shape[2] == 1,"Num heads is 1 to keep life easy."
-        normz = EffNormzFunction.apply(attn,sims,self.nsamples)
+        # print("self.nsamples: ",self.nsamples)
+        # exit()
+        samples = EffNormzFunction.sample(sims,self.nsamples)
+        normz = EffNormzFunction.apply(attn,samples)
         if th.any(normz==0):
             print(attn)
             print(normz)
@@ -744,16 +750,16 @@ class SPIntraAttModuleV4(nn.Module):
         K = indices.shape[1] # number of superpixels
         lids = th.arange(K).to(indices.device).reshape(1,K,1).expand_as(indices)
         labels = th.gather(labels.expand(-1,K,-1),-1,indices)
-        # mask = 1.*(labels == lids)
-        # mask = mask.reshape(1,K,1,self.topk,1)
+        mask = 1.*(labels == lids)
+        mask = mask.reshape(1,K,1,self.topk,1)
 
         # -- create q,k,v --
         sample_it = lambda qkv,dim: torch.gather(qkv.reshape(B, 1, -1, H*W).expand(-1, num_spixels, -1, -1), -1, indices.unsqueeze(2).expand(-1, -1, dim, -1)) # B, K, C, topk
         shape_str = 'b k (h c) t -> b k h t c'
         reshape_it = lambda qkv: rearrange(qkv, shape_str, h=self.num_heads)
-        q_sp_pixels = reshape_it(sample_it(q,self.qk_dim))
-        k_sp_pixels = reshape_it(sample_it(k,self.qk_dim))
-        v_sp_pixels = reshape_it(sample_it(v,self.dim))
+        q_sp_pixels = mask*reshape_it(sample_it(q,self.qk_dim))
+        k_sp_pixels = mask*reshape_it(sample_it(k,self.qk_dim))
+        v_sp_pixels = mask*reshape_it(sample_it(v,self.dim))
         # print(q_sp_pixels.shape)
         # print("mask.shape: ",mask.shape)
         # exit()
@@ -926,7 +932,8 @@ class Block(nn.Module):
                  use_nat=False, nat_ksize=7, use_conv=False,
                  affinity_softmax=1., topk=None, softmax_order="v0",
                  intra_version="v1",use_ffn=True,spa_scale=None,
-                 spa2_normz=False,spa2_kweight=True,spa2_oweight=True):
+                 spa2_normz=False,spa2_kweight=True,spa2_oweight=True,
+                 spa2_nsamples=30):
         super(Block,self).__init__()
         self.layer_num = layer_num
         self.stoken_size = stoken_size
@@ -968,15 +975,15 @@ class Block(nn.Module):
                                              topk=topk, qk_scale=spa_scale,
                                              normz=spa2_normz,
                                              kweight=spa2_kweight,
-                                             out_weight=spa2_oweight)
+                                             out_weight=spa2_oweight,
+                                             nsamples=spa2_nsamples)
             elif intra_version == "v5": # sampling
                 exact = SPIntraAttModuleV3(dim, heads, qk_dim,
                                            topk=topk, qk_scale=spa_scale,
                                            normz=spa2_normz,
                                            kweight=spa2_kweight,
                                            out_weight=spa2_oweight)
-                nsamples = 30
-                intra_l = SPIntraAttModuleV5(exact,nsamples,topk)
+                intra_l = SPIntraAttModuleV5(exact,spa2_nsamples,topk)
             if use_ffn: ffn_l = FFN(dim, mlp_dim, dim)
             else: ffn_l = nn.Identity()
             self.intra_layer = nn.ModuleList([

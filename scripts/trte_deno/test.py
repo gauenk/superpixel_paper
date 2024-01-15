@@ -58,7 +58,7 @@ def main():
 
     for sigma,sig_df in results.groupby("sigma"):
         print("sigma: ",sigma)
-        for spa,sdf in sig_df.groupby(["spa_version","topk"]):
+        for spa,sdf in sig_df.groupby(["spa_version","topk","spa2_nsamples"]):
             # print(sdf[['dname','name','topk','psnrs','ssims']])
             print("SPA: ",spa,"%2.2f,%0.3f" %
                   (sdf['psnrs'].mean(),sdf['ssims'].mean()))

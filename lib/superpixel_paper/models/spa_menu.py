@@ -17,10 +17,11 @@ def load_spa(spa_version,dim,heads,qk_dim,gen_sp,**kwargs):
     cfg = edict(kwargs)
     spa = SPA(dim, heads, qk_dim, gen_sp,
               topk=cfg.topk,qk_scale=cfg.spa_scale,
-              kweight=cfg.spa_kweight,out_weight=cfg.spa_oweight,
+              vweight=cfg.spa_vweight,out_weight=cfg.spa_oweight,
               attn_normz=cfg.spa_attn_normz,
               normz_nsamples=cfg.spa_attn_normz_nsamples,
-              scatter_normz=cfg.spa_scatter_normz)
+              scatter_normz=cfg.spa_scatter_normz,
+              dist_type=cfg.dist_type)
     if cfg.spa_full_sampling:
         if cfg.spa_sim_method == "slic":
             spa = SpaGmmSampling(spa,gen_sp,nsamples=cfg.spa_attn_nsamples,topk=cfg.topk)

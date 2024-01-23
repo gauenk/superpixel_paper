@@ -33,11 +33,15 @@ setup(
     package_data={'': ['*.so']},
     include_package_data=True,
     ext_modules=[
-        CUDAExtension('eff_normz_cuda', [
+        CUDAExtension('superpixel_cuda', [
             # -- search --
             # 'lib/superpixel_paper/sr_models/pair_wise_distance_cuda_source.cu',
             # 'lib/superpixel_paper/sr_models/eff_normz_cuda_source.cu',
             'lib/superpixel_paper/est_attn_normz/eff_normz_cuda_source.cu',
+            "lib/superpixel_paper/nsp/nsa_agg_cuda_source.cu",
+            "lib/superpixel_paper/nsp/nsa_attn_cuda_source.cu",
+            "lib/superpixel_paper/pybind.cpp",
+            # 'lib/superpixel_paper/nsp/nsa_agg_cuda_source.cu',
         ],
                       extra_compile_args={'cxx': ['-g','-w'],
                                           'nvcc': ['-O2','-w']})

@@ -26,7 +26,16 @@ def normalize_attention(version,attn,sims,mask,nsamples):
         # eps = 1e-10
         c = (attn).max().item()
         # print(attn.min().item(),attn.max().item())
-        normz = estimate_normz(th.exp(attn-c),sims,nsamples)
+
+        # -- [cuda kernel; not needed anymore i think...] --
+        # normz = estimate_normz(th.exp(attn-c),sims,nsamples)
+
+        sims = sims[...,None].expand(-1,-1,-1,nsamples)
+        samples = th.bernoulli(sims)
+        # normz = th.sum(mask*th.exp(attn-c))
+        exit()
+
+
         attn = th.exp(attn-c-th.log(normz))
         # print(attn.min().item(),attn.max().item())
         # # eps = 1e-6
@@ -45,7 +54,7 @@ def normalize_attention(version,attn,sims,mask,nsamples):
 
         # -- softmax --
         # attn = nz_mask*(attn).softmax(dim=-1)
-        print(attn.min().item(),attn.max().item())
+        # print(attn.min().item(),attn.max().item())
         if th.any(th.isnan(attn)):
             print(mask.sum(-1),mask.shape)
             print(attn.min().item(),attn.max().item())
@@ -55,10 +64,14 @@ def normalize_attention(version,attn,sims,mask,nsamples):
         # exit()
 
     elif version == "mle_z":
+        # -- attn --
         mask = mask[...,None,:,0]
         eps = 1e-6
-        attn = th.exp(attn)
-        attn = attn / (eps+th.sum(mask*attn,-1,keepdim=True))
+        c = (mask*attn).max().item()
+        attn = th.exp(attn - c - th.log(eps+th.sum(mask*th.exp(attn-c))))
+        # eps = 1e-6
+        # attn = th.exp(attn)
+        # attn = attn / (eps+th.sum(mask*attn,-1,keepdim=True))
         # print("[min,max]: ",attn.min().item(),attn.max().item())
         # exit()
     elif version == "softmax":
@@ -106,6 +119,7 @@ def weighted_scatter_mean(tgt, weight, mask, dim, indices, src ,normz=False):
             ones = th.ones_like(weight)
             new_count = torch.scatter_add(count, dim, indices, ones)
             new_src /= new_count
+            # print(new_src)
         elif (normz == "mask"):
             new_count = torch.scatter_add(count, dim, indices, mask)
             new_src /= new_count
@@ -119,10 +133,28 @@ def scatter_mean(tgt, dim, indices, src, weights=None, divide=True):
     new_count = torch.scatter_add(count, dim, indices, torch.ones_like(src))
     if divide == "ones":
         eps = 1e-6
+        count = torch.ones_like(tgt)
+        new_count = torch.scatter_add(count, dim, indices, torch.ones_like(src))
         new_src = new_src / (eps+new_count)
     elif divide == "weights":
+        eps = 1e-6
         count = torch.zeros_like(tgt)
-        new_weight = torch.scatter_add(count, dim, indices, weights)
-        new_src = new_src / (eps+new_weight)
+        new_count = torch.scatter_add(count, dim, indices, weights)
+        # print("pre: ",new_src.min().item(),new_src.max().item())
+        # print(new_count)
+        # print(new_count.min(),new_count.max())
+        # print("pre: ",new_src.min().item(),new_src.max().item())
+        # print(new_count.shape)
+        # print(th.histogram(new_count[0,0].cpu()))
+        new_src = new_src / (eps+new_count)
+        # print("post: ",new_src.min().item(),new_src.max().item())
+        # exit()
+        # print(new_src.min().item(),new_src.max().item())
 
-    return new_src,new_count
+    # -- provide weights --
+    wght = None
+    if divide == "sum2one":
+        wght = torch.zeros_like(tgt)
+        wght = torch.scatter_add(wght, dim, indices, weights)
+
+    return new_src,new_count,wght

@@ -278,7 +278,7 @@ def get_hard_abs_labels(affinity_matrix, init_label_map, num_spixels_width):
 
 
 def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
-             affinity_softmax=1., softmax_order="v0"):
+             affinity_softmax=1., softmax_order="v0",use_grad=False):
     """
     computing assignment iterations
     detailed process is in Algorithm 1, line 2 - 6
@@ -319,7 +319,7 @@ def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
     permuted_pixel_features = pixel_features.permute(0, 2, 1).contiguous()
     assert softmax_order in ["v0","v1"], "Softmax order must be v0, v1."
 
-    with torch.no_grad():
+    with torch.set_grad_enabled(use_grad):
         for k in range(n_iter):
 
             # -- compute all affinities  --
@@ -355,18 +355,21 @@ def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
 
 
 class GenSP(nn.Module):
-    def __init__(self, n_iter=2,M=0.,affinity_softmax=1., softmax_order="v0"):
+    def __init__(self, n_iter=2,M=0.,affinity_softmax=1.,
+                 softmax_order="v0",use_grad=False):
         super().__init__()
         self.n_iter = n_iter
         self.M = M
         self.affinity_softmax = affinity_softmax
         self.softmax_order = softmax_order
+        self.use_grad = use_grad
 
     def forward(self, x, stoken_size):
         soft_association, num_spixels = ssn_iter(x, stoken_size,
                                                  self.n_iter, self.M,
                                                  self.affinity_softmax,
-                                                 self.softmax_order
+                                                 self.softmax_order,
+                                                 use_grad=self.use_grad
         )
         return soft_association, num_spixels
 
@@ -933,11 +936,12 @@ class Block(nn.Module):
                  affinity_softmax=1., topk=None, softmax_order="v0",
                  intra_version="v1",use_ffn=True,spa_scale=None,
                  spa2_normz=False,spa2_kweight=True,spa2_oweight=True,
-                 spa2_nsamples=30):
+                 spa2_nsamples=30,gen_sp_use_grad=False):
         super(Block,self).__init__()
         self.layer_num = layer_num
         self.stoken_size = stoken_size
-        self.gen_super_pixel = GenSP(3,M,affinity_softmax,softmax_order)
+        self.gen_super_pixel = GenSP(3,M,affinity_softmax,softmax_order,
+                                     gen_sp_use_grad)
         self.use_inter = use_inter
         self.use_intra = use_intra
         self.use_local = use_local

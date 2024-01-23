@@ -3,12 +3,6 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-// #include <ATen/cuda/CUDAContext.h>
-// #include <ATen/ATen.h>
-// #include <ATen/native/cuda/KernelUtils.cuh>
-// #include <ATen/native/cuda/KernelUtils.cuh>
-// #include <ATen/AccumulateType.h>
-
 #include <cuda/std/type_traits>
 #include <torch/types.h>
 #include <cuda.h>
@@ -18,17 +12,17 @@
 
 
 #define CUDA_NUM_THREADS 512
-#define CUDA_NUM_THREADS_V2 1024
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
 
 template <typename scalar_t>
-__global__ void eff_forward_kernel(
-    const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn,
-    const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> samples,
-    torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> normz,
+__global__ void nsp_forward_kernel(
+    const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> imgQ,
+    const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> imgK,
+    torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn,
+    torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> spMask,
     int nbatch, int nsuperpixels, int psize, int nsamples){
 
     // -- unpack --
@@ -51,7 +45,7 @@ __global__ void eff_forward_kernel(
       // -- skip eqs --
       if (pk == pi){ continue; }
       if (pk == pj){ continue; }
-      acc += (samples[bi][spi][pk][si]>0) ? attn[bi][spi][hi][pi][pk] : 0;
+      acc += attn[bi][spi][hi][pi][pk]*samples[bi][spi][pk][si];
     }
 
     // -- init output --
@@ -66,7 +60,7 @@ __global__ void eff_forward_kernel(
 
 }
 
-void eff_forward_cuda(
+void nsp_forward_cuda(
     const torch::Tensor attn,
     const torch::Tensor samples,
     torch::Tensor normz){
@@ -87,7 +81,7 @@ void eff_forward_cuda(
     int ntotal = nsamples*psize*psize;
     dim3 block((ntotal-1)/CUDA_NUM_THREADS+1,nsuperpixels,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn.type(), "forward_kernel", ([&] {
-        eff_forward_kernel<scalar_t><<< block, CUDA_NUM_THREADS >>>(
+        nsp_forward_kernel<scalar_t><<< block, CUDA_NUM_THREADS >>>(
             attn.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             samples.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
             normz.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
@@ -101,68 +95,71 @@ void eff_forward_cuda(
 
 
 template <typename scalar_t>
-__global__ void eff_backward_kernel(
+__global__ void nsp_backward_kernel(
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn_grad,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> normz_grad,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn,
     const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> samples,
-    int nbatch, int nsuperpixels, int psize, int nsamples,
-    int npj_per_thread, int npj_threads){
+    int nbatch, int nsuperpixels, int psize, int nsamples){
 
     // -- unpack --
     int bi = blockIdx.z % nbatch;
     int hi = bi / nbatch;
     int spi = blockIdx.y;
-    // int ntotal = nsamples*psize*psize;//*psize;
-    int ntotal = nsamples*psize*psize*npj_threads;
+    int ntotal = nsamples*psize*psize*psize;
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= ntotal){ return; }
     int si = index % nsamples;
     int tmp = index / (nsamples);
     int pi = tmp % psize;
     tmp = index / (nsamples*psize);
-    int pk = tmp % psize;
-    // if ((si >= nsamples) or (pi >= psize) or (pk >= psize)){ return; }
-    // tmp = index / (nsamples*psize*psize);
-    // int pk = tmp % psize;
-    // if ((si >= nsamples) or (pi >= psize) or (pj >= psize) or (pk >= psize)){ return; }
+    int pj = tmp % psize;
     tmp = index / (nsamples*psize*psize);
-    int pj_start = npj_per_thread*(tmp % npj_threads);
-    int pj_end = min(pj_start+npj_per_thread,psize);
-    // if ((si >= nsamples) or (pi >= psize) or (pj >= psize) or (pk >= psize)){ return; }
-
+    int pk = tmp % psize;
+    if ((si >= nsamples) or (pi >= psize) or (pj >= psize) or (pk >= psize)){ return; }
 
     //
     // -- Compute the Estimate for (i,j) --
     //
 
+    // // -- accumulate --
+    // scalar_t acc = 0;
+    // for (int pn=0;pn<psize;pn++){
+    //   // -- skip eqs --
+    //   if (pn == pi){ continue; }
+    //   if (pn == pj){ continue; }
+    //   // acc += attn[bi][spi][hi][pi][pn]*samples[bi][spi][pn][si];
+    //   acc += samples[bi][spi][pn][si];
+    // }
+
+    // // -- doesn't use samples --
+    // acc += 1;//attn[bi][spi][hi][pi][pi];
+    // if (pi != pj){
+    //   acc += 1;//attn[bi][spi][hi][pi][pj];
+    // }
+
+    // -- handle indicator function for k \neq i,j --
     bool zero_grad = false;
-    bool sample_is_zero = samples[bi][spi][pk][si] == 0;
-    scalar_t acc = 0;
-    for (int pj=pj_start;pj<pj_end;pj++){
-
-      // -- handle indicator function for k \neq i,j --
-      // bool zero_grad = false;
-      // if ((pk != pi) and (pk != pj)){
-      //   zero_grad = sample_is_zero;
-      // }
-      zero_grad = (pk != pi) and (pk != pj) and sample_is_zero;
-
-      // -- accumulate in attention --
-      acc += zero_grad ? 0 : normz_grad[bi][spi][hi][pi][pj];
-
-
-    } // pj for loop
+    if ((pk != pi) and (pk != pj)){
+      if (samples[bi][spi][pk][si] == 0){
+        zero_grad = true;
+      }
+    }
+    scalar_t acc = zero_grad ? 0 : normz_grad[bi][spi][hi][pi][pj];
+    // acc = zero_grad ? 0 : -normz_grad[bi][spi][hi][pi][pj]/(acc*acc);
+    // acc = normz_grad[bi][spi][hi][pi][pj];
 
     //
     // -- Accumulate at (i,k) --
     //
-    atomicAdd(&attn_grad[bi][spi][hi][pi][pk],acc/nsamples);
 
+    // -- accumulate in attention --
+    atomicAdd(&attn_grad[bi][spi][hi][pi][pk],acc/nsamples);
+    // atomicAdd(&attn_grad[bi][spi][hi][pi][pk],1);
 
 }
 
-void eff_backward_cuda(
+void nsp_backward_cuda(
     torch::Tensor attn_grad,
     const torch::Tensor normz_grad,
     const torch::Tensor attn,
@@ -181,32 +178,23 @@ void eff_backward_cuda(
     int psize = attn_grad.size(3);
     int nsamples = samples.size(3);
 
-    // -- tiling --
-    int npj_per_thread = psize;
-    int npj_threads = (psize-1)/npj_per_thread+1;
-
     // -- block --
-    int ntotal = nsamples*psize*psize*npj_threads;
-    dim3 block((ntotal-1)/CUDA_NUM_THREADS_V2+1,nsuperpixels,nbatch*nheads);
+    int ntotal = nsamples*psize*psize*psize;
+    dim3 block((ntotal-1)/CUDA_NUM_THREADS+1,nsuperpixels,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn_grad.type(), "backward_kernel", ([&] {
-        eff_backward_kernel<scalar_t><<< block, CUDA_NUM_THREADS_V2 >>>(
+        nsp_backward_kernel<scalar_t><<< block, CUDA_NUM_THREADS >>>(
             attn_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             normz_grad.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             attn.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             samples.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-            nbatch, nsuperpixels, psize, nsamples, npj_per_thread, npj_threads);
+            nbatch, nsuperpixels, psize, nsamples);
     }));
 
 }
 
 
-void init_eff_normz(py::module &m){
-  m.def("eff_forward", &eff_forward_cuda, "efficient normz forward");
-  m.def("eff_backward", &eff_backward_cuda, "efficient normz forward");
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("nsp_forward", &nsp_forward_cuda, "neighborhood superpixel atten forward");
+  m.def("nsp_backward", &nsp_backward_cuda, "neighborhood superpixel atten backward");
 }
-
-// PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-//   m.def("eff_forward", &eff_forward_cuda, "efficient normz forward");
-//   m.def("eff_backward", &eff_backward_cuda, "efficient normz forward");
-// }
 

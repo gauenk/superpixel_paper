@@ -19,6 +19,7 @@ import data_hub
 # -- nicer viz --
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
+from superpixel_paper.models.bass import SimulateBass
 
 # -- viz --
 from einops import rearrange
@@ -194,6 +195,7 @@ def main():
     alpha_base = 0.15 # transparency of non-superpixel region
     sims_w = sims[:,sH:eH,sW:eW]
     ftrs_w = ftrs[sH:eH,sW:eW]
+    labels_w = labels[sH:eH,sW:eW]
     iftrs = th.cat([ftrs_w,th.ones_like(ftrs_w[:,:,[0]])],-1)
     iftrs = rearrange(iftrs.cpu(),'h w f -> f h w')
     superpixels = [iftrs]
@@ -235,6 +237,15 @@ def main():
         superpixels.append(th.from_numpy(seg))
     grid = tv_utils.make_grid(superpixels)
     vid_io.save_image(grid,"output/figures/sample_superpixel/examples")
+
+    # -- save marked region --
+    seg = mark_boundaries(ftrs_w.cpu().numpy(),labels_w,mode=mode)
+    seg = irz(rearrange(seg,'h w c -> c h w'),128,128)
+    vid_io.save_image(seg,"output/figures/sample_superpixel/seg")
+    ftrs_w = irz(rearrange(ftrs_w,'h w c -> c h w'),128,128)
+    vid_io.save_image(ftrs_w,"output/figures/sample_superpixel/ftrs")
+
+
 
 
 if __name__ == "__main__":

@@ -7,6 +7,12 @@ from pathlib import Path
 from dev_basics.utils import vid_io
 from torchvision import utils as tv_utils
 from einops import rearrange
+import pandas as pd
+
+# -- nicer viz --
+import torchvision.transforms.functional as TF
+from torchvision.transforms import InterpolationMode
+
 
 # def get_file_dir(root,subdir):
 #     adir = None
@@ -82,52 +88,115 @@ from einops import rearrange
 #         assert fn_b.exists(),fn_b
 #         compare_example(fn_a,fn_b,fn,sname)
 
-def get_boxes(fn_a,fn_b,box,W):
+def get_gt(dname,iname):
+    # -- read filename --
+    if dname == "b100":
+        dname = "bsd100"
+    base = Path("/srv/disk3tb/home/gauenk/data/") / dname / "HR/"
+    files = sorted(list(base.iterdir()))
+    index = int(iname.split("_")[0])-1
+    fn = files[index]
+    print(fn.name)
+    return fn
+
+def get_boxes(fn_a,box,W):
     img_a = np.array(Image.open(fn_a))
-    img_b = np.array(Image.open(fn_b))
     crop_a = img_a[box[0]:box[0]+W,box[1]:box[1]+W]
-    crop_b = img_b[box[0]:box[0]+W,box[1]:box[1]+W]
     crop_a = rearrange(th.from_numpy(crop_a),'h w c -> c h w')
-    crop_b = rearrange(th.from_numpy(crop_b),'h w c -> c h w')
-    return crop_a,crop_b
+    return crop_a
+
+def irz(img,tH,tW):
+    is_t = th.is_tensor(img)
+    if not is_t: img = th.from_numpy(img)
+    img = TF.resize(img,(tH,tW),
+                    interpolation=InterpolationMode.NEAREST)
+    if not is_t: img = img.numpy()
+    return img
+
+def comp_psnrs(gt,img_m):
+    return -10 * th.log10(th.mean((gt/255. - img_m/255.)**2)).item()
 
 def main():
 
-    midfix_a = "ca421/epoch=49/"
-    midfix_b = "54b6a/epoch=49/"
+    # "d84c37,48af63,c19c38"
+    midfix_a = "48af6/epoch=49/" # biased
+    midfix_b = "d84c3/epoch=49/" # aspa
+    midfix_c = "c19c3/epoch=49/" # mle
+    # midfixes = [midfix_a,midfix_c,midfix_b]
+    method_names = ["biased","mle","aspa"]
+    midfixes = [midfix_a,midfix_c,midfix_b]
+    M = len(midfixes)
     base = "output/deno/test/"
     gt = "data/benchmarks/"
-    W = 128
-    sigmas = [25,30,35]
+    # W = 128
+    W = 156
+    # W = 128
+    sigmas = [15,20,25,30,35]
+    sigmas = [35]
     boxes = {
-        "set5":{"5_x1":[50,50]},
-        "set14":{"2_x1":[100,420],
-                      # "5_x1":[100,100]
-                      #"11_x1":[100,250]
-             },
-        "u100":{#"96_x1":[400,800],
-                "5_x1":[600,500],
+        "set5":{
+            # "5_x1":[50,50]},
+            "5_x1":[80,50]},
+
+        # "set14":{#"9_x1":[225,225],
+        #          # "2_x1":[100,420],
+        #          # "2_x1":[120,450],
+        #          # "8_x1":[120,120],
+        #     # "11_x1":[100,250]
+        #      },
+
+        # "u100":{#"96_x1":[400,800],
+        #         "5_x1":[600,500],
+        # }
+        "b100":{#"96_x1":[400,800],
+                # "2_x1":[150,150],
+                # "38_x1":[50,0],
+                # "41_x1":[30,150+148],
+            # "78_x1":[30,30],
+            # "82_x1":[180,180],
         }
     }
+
     grids = []
+    info = []
     for dname in boxes.keys():
         for iname,box in boxes[dname].items():
             imgs = []
             for sigma in sigmas:
-                fn_a = Path(base)/str(sigma)/midfix_a/dname/("%s.png"%iname)
-                fn_b = Path(base)/str(sigma)/midfix_b/dname/("%s.png"%iname)
-                img_a,img_b = get_boxes(fn_a,fn_b,box,W)
-                imgs.append(img_b)
-                imgs.append(img_a)
-            imgs = rearrange(th.stack(imgs),'(a b) c h w -> (b a) c h w',b=2)
-            grid = tv_utils.make_grid(imgs,nrow=len(sigmas))
+                gt = get_boxes(get_gt(dname,iname),box,W)
+                imgs.append(gt)
+                for mname,midfix in zip(method_names,midfixes):
+                    fn_m = Path(base)/str(sigma)/midfix/dname/("%s.png"%iname)
+                    img_m = get_boxes(fn_m,box,W)
+                    psnr_m = comp_psnrs(gt,img_m)
+                    info.append({"dname":dname,"iname":iname,
+                                  "sigma":sigma,"mname":mname,"psnrs":psnr_m})
+                    imgs.append(img_m)
+                # fn_b = Path(base)/str(sigma)/midfix_b/dname/("%s.png"%iname)
+                # img_a,img_b = get_boxes(fn_a,fn_b,box,W)
+                # imgs.append(img_a)
+            # imgs = rearrange(th.stack(imgs),'(a b) c h w -> (b a) c h w',b=M+1)
+            # grid = tv_utils.make_grid(imgs,nrow=len(sigmas))
+            imgs = rearrange(th.stack(imgs),'(a b) c h w -> (a b) c h w',b=M+1)
+            grid = tv_utils.make_grid(imgs,nrow=M+1)#len(sigmas))
             grids.append(grid)
 
     # -- get grid --
     # grid_a = tv_utils.make_grid(imgs_a,nrow=len(sigmas))
     # grid_b = tv_utils.make_grid(imgs_b,nrow=len(sigmas))
-    grid = tv_utils.make_grid(grids,nrow=3)
-    vid_io.save_image(grid,"output/figures/examples/grid")
+    # grid = tv_utils.make_grid(grids,nrow=M+1)
+
+    for i,grid in enumerate(grids):
+        H,W = grid.shape[-2:]
+        grid_s = irz(grid,2*H,2*W)
+        vid_io.save_image(grid_s,"output/figures/deno_examples/grid_%d"%i)
+    # vid_io.save_image(grid,"output/figures/deno_examples/grid")
+
+    info = pd.DataFrame(info)
+    for di_name,di_df in info.groupby(["dname","iname"]):
+        print(di_name)
+        for mname,m_df in di_df.groupby(["mname"]):
+            print(m_df)
 
 
 if __name__ == "__main__":

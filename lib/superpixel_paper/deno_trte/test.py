@@ -58,15 +58,29 @@ def extract_defaults(_cfg):
         "heads":1,"M":0.,"use_local":False,"use_inter":False,
         "use_intra":True,"use_fnn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
-        "data_path":"./data/sr/","data_augment":False,"seed":123,
+        "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[0]","threads":4,"model":"spin",
-        "decays":[],"gamma":0.5,"lr":0.0001,"resume":None,
+        "gpu_ids":"[1]","threads":4,"model":"model",
+        "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
         "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
         "output_folder":"output/deno/test","save_output":False}
+    # defs = {
+    #     "dim":12,"qk_dim":6,"mlp_dim":6,"stoken_size":[8],"block_num":1,
+    #     "heads":1,"M":0.,"use_local":False,"use_inter":False,
+    #     "use_intra":True,"use_fnn":False,"use_nat":False,"nat_ksize":9,
+    #     "affinity_softmax":1.,"topk":100,"intra_version":"v1",
+    #     "data_path":"./data/sr/","data_augment":False,"seed":123,
+    #     "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
+    #     "gpu_ids":"[0]","threads":4,"model":"model",
+    #     "decays":[],"gamma":0.5,"lr":0.0001,"resume":None,
+    #     "log_name":"default_log","exp_name":"default_exp",
+    #     "upscale":2,"epochs":50,"denoise":False,
+    #     "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
+    #     "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
+    #     "output_folder":"output/deno/test","save_output":False}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
 
@@ -119,7 +133,7 @@ def run(cfg):
 
     ## definitions of model
     try:
-        import_str = 'superpixel_paper.sr_models.{}'.format(cfg.model)
+        import_str = 'superpixel_paper.models.{}'.format(cfg.model)
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')
@@ -138,6 +152,8 @@ def run(cfg):
     print("Checkpoint: ",chkpt_fn)
     ckpt = torch.load(chkpt_fn)
     prev_epoch = ckpt['epoch']
+
+    # mstate = cleanup_mstate(ckpt['model_state_dict'])
     model.load_state_dict(ckpt['model_state_dict'])
     stat_dict = ckpt['stat_dict']
     print('select {} for testing'.format(chkpt_fn))
@@ -261,3 +277,11 @@ def run(cfg):
     info = info.rename(columns={"name":"iname"})
 
     return info.to_dict(orient="records")
+
+
+def cleanup_mstate(mstate):
+    states = {}
+    for key,state in mstate.items():
+        if "cached_penc" in key: continue
+        states[key] = state
+    return states

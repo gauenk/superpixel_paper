@@ -33,6 +33,20 @@ class SimulateBass():
         return indices, labels, mask
 
 
+# -- misc --
+# Global.repeat=False
+# count = 0
+# for Global.IMAGE1 in image_files:
+#     torch.cuda.empty_cache()
+#     count = count + 1
+#     Global.initVariables()
+#     Global.Beta_P = (args.potts-2.7) + Global.Beta_P
+#     Global.K_C = args.sp
+#     Global.csv_file=Global.IMAGE1[Global.IMAGE1.rfind("/")+1:][:-4]
+#     Global.repeat=False
+#     print(Global.csv_file)
+#     SuperPixelsSplitMerge()
+
 def mask_from_labels(labels,indices):
     K,topk = indices.shape[1:3] # number of superpixels
     lids = th.gater(labels,sp_locs)
@@ -41,7 +55,6 @@ def mask_from_labels(labels,indices):
     mask = 1.*(labels == lids)
     mask = mask.reshape(1,K,1,topk,1)
     return mask
-
 
 
 def run_bass_sp(x,seed):

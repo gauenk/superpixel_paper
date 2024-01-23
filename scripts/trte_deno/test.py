@@ -24,9 +24,10 @@ def main():
     verbose = True
     pid = os.getpid()
     print("PID: ",pid)
+    read_testing = False
 
     # -- get/run experiments --
-    refresh = True
+    refresh = True and not(read_testing)
     def clear_fxn(num,cfg): return False
     read_test = cache_io.read_test_config.run
     exps = read_test("exps/trte_deno/test.cfg",
@@ -42,29 +43,37 @@ def main():
                                 version="v1",skip_loop=False,clear_fxn=clear_fxn,
                                 clear=False,enable_dispatch="slurm",
                                 records_fn=".cache_io_pkl/trte_deno/test.pkl",
-                                records_reload=True,use_wandb=False,
-                                proj_name="superpixels_deno_test")
+                                records_reload=True and not(read_testing),
+                                use_wandb=False,proj_name="superpixels_deno_test")
+
+    results = results.rename(columns={"affinity_softmax":"asm"})
+    for sigma,sig_df in results.groupby("sigma"):
+        print("-"*20)
+        print("sigma: ",sigma)
+        print("-"*20)
+        # for dname,ddf in sig_df.groupby("dname"):
+        #     print("dname: ",dname)
+        #     # print(ddf.columns)
+        for spa,sdf in sig_df.groupby(["spa_version","nsa_mask_labels","spa_scale","tr_uuid"]):
+        # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale","asm"]):
+        # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale"]):
+            # print("spa: ",spa)
+            print("SPA: ",spa,"%2.2f,%0.3f" %
+                  (sdf['psnrs'].mean(),sdf['ssims'].mean()))
+            # print(sdf[['iname','psnrs','ssims']])
+
+    df = results[results['dname']=='b100']
+    df[['iname','sigma','spa_version','psnrs','ssims']].sort_values(["iname","sigma"]).to_csv("bsd100.csv",index=False)
 
     # for sigma,sig_df in results.groupby("sigma"):
     #     print("sigma: ",sigma)
-    #     for dname,ddf in sig_df.groupby("dname"):
-    #         print("dname: ",dname)
-    #         print(ddf.columns)
-    #         for spa,sdf in ddf.groupby(["spa_version","topk"]):
-    #             print("spa: ",spa)
-    #             print(sdf[['iname','psnrs','ssims']])
-    #             # print("SPA: ",spa,"%2.2f,%0.3f" %
-    #             #       (sdf['psnrs'].mean(),sdf['ssims'].mean()))
-
-    for sigma,sig_df in results.groupby("sigma"):
-        print("sigma: ",sigma)
-        for spa,sdf in sig_df.groupby(["spa_version","topk","spa2_nsamples"]):
-            # print(sdf[['dname','name','topk','psnrs','ssims']])
-            print("SPA: ",spa,"%2.2f,%0.3f" %
-                  (sdf['psnrs'].mean(),sdf['ssims'].mean()))
-    #         # for dname,ddf in sdf.groupby("dname"):
-    #         #     # if dname != "set5": continue
-    #         #     print("[%s]: %2.2f,%0.3f" % (dname,ddf['psnrs'].mean(),ddf['ssims'].mean()))
+    #     for spa,sdf in sig_df.groupby(["spa_version","topk","spa2_nsamples"]):
+    #         # print(sdf[['dname','name','topk','psnrs','ssims']])
+    #         print("SPA: ",spa,"%2.2f,%0.3f" %
+    #               (sdf['psnrs'].mean(),sdf['ssims'].mean()))
+    # #         # for dname,ddf in sdf.groupby("dname"):
+    # #         #     # if dname != "set5": continue
+    # #         #     print("[%s]: %2.2f,%0.3f" % (dname,ddf['psnrs'].mean(),ddf['ssims'].mean()))
 
     # for sigma,sig_df in results.groupby("sigma"):
     #     print("sigma: ",sigma)

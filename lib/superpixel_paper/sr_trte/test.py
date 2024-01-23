@@ -61,7 +61,7 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[0]","threads":4,"model":"spin",
+        "gpu_ids":"[0]","threads":4,"model":"model",
         "decays":[],"gamma":0.5,"lr":0.0001,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,"seed":123,"with_sigma":False,
@@ -119,7 +119,7 @@ def run(cfg):
 
     ## definitions of model
     try:
-        import_str = 'superpixel_paper.sr_models.{}'.format(cfg.model)
+        import_str = 'superpixel_paper.models.{}'.format(cfg.model)
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')

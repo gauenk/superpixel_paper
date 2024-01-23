@@ -14,6 +14,11 @@ dcopy = copy.deepcopy
 from easydict import EasyDict as edict
 from pathlib import Path
 from ..spa_config import config_via_spa
+from superpixel_paper.utils import hooks
+from torchvision.utils import save_image,make_grid
+
+# import torch as th
+# th.autograd.set_detect_anomaly(True)
 
 # parser = argparse.ArgumentParser(description='SPIN')
 # ## yaml configuration files
@@ -22,6 +27,17 @@ from ..spa_config import config_via_spa
 # parser.add_argument('--exp-name', type=str, default=None, help = 'experiment name')
 # parser.add_argument('--denoise', default=False, action="store_true")
 # #parser.add_argument('--sigma', type=int, default=0., help = "sigma")
+
+def seed_everything(seed: int):
+    import random, os
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 def add_noise(lr,args):
     if "sigma" in args:
@@ -70,7 +86,7 @@ def extract_defaults(_cfg):
     defs = {
         "dim":12,"qk_dim":6,"mlp_dim":6,"stoken_size":[8],"block_num":1,
         "heads":1,"M":0.,"use_local":False,"use_inter":False,
-        "use_intra":True,"use_fnn":False,"use_nat":False,"nat_ksize":9,
+        "use_intra":True,"use_ffn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
@@ -90,7 +106,7 @@ def run(cfg):
     config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
-    if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoint" / resume_uuid
+    if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoints" / resume_uuid
     else: cfg.resume = None
 
     ## set visibel gpu
@@ -98,6 +114,7 @@ def run(cfg):
     print("gpu_ids_str: ",gpu_ids_str)
     os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
     os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    seed_everything(cfg.seed)
 
     from dev_basics import net_chunks
     from easydict import EasyDict as edict
@@ -139,8 +156,9 @@ def run(cfg):
     ## resume training
     start_epoch = 1
     if cfg.resume is not None:
+        # print(cfg.resume)
         chkpt_files = glob.glob(os.path.join(cfg.resume, "*.ckpt"))
-
+        # print(chkpt_files)
         if len(chkpt_files) != 0:
             chkpt_files = sorted(chkpt_files, key=lambda x: int(x.replace('.ckpt','').split('=')[-1]))
             chkpt = torch.load(chkpt_files[-1])
@@ -152,6 +170,7 @@ def run(cfg):
             stat_dict = chkpt['stat_dict']
             ## reset folder and param
             # experiment_path = cfg.resume
+            experiment_name = cfg.uuid
             logging_path = os.path.join(cfg.log_path, 'logs', experiment_name)
             chkpt_path = os.path.join(cfg.log_path, 'checkpoints', experiment_name)
             log_name = os.path.join(logging_path,'log.txt')
@@ -188,15 +207,22 @@ def run(cfg):
     # exit()
     sys.stdout.flush()
 
+    # -- chunking for validation --
+    chunk_cfg = edict()
+    chunk_cfg.spatial_chunk_size = 256
+    chunk_cfg.spatial_chunk_sr = cfg.upscale
+    chunk_cfg.spatial_chunk_overlap = 0.25
+
     ## start training
     timer_start = time.time()
     for epoch in range(start_epoch, cfg.nepochs+1):
         epoch_loss = 0.0
         stat_dict['epochs'] = epoch
         model = model.train()
+        # hook = hooks.AttentionHook(model)
         opt_lr = scheduler.get_last_lr()
         print('##==========={}-training, Epoch: {}, lr: {} =============##'.format('fp32', epoch, opt_lr))
-        th.manual_seed(epoch)
+        th.manual_seed(int(cfg.seed)+epoch)
         for iter, batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             lr, hr = batch
@@ -209,6 +235,9 @@ def run(cfg):
             loss = th.sqrt(th.mean((sr-hr)**2)+eps**2)
             # loss_func(sr, hr)
             loss.backward()
+            # vgrad = hooks.get_qkv_grads(model)
+            # print(vgrad.shape)
+            # exit()
             optimizer.step()
             epoch_loss += float(loss)
             if (iter + 1) % cfg.log_every == 0:
@@ -236,12 +265,11 @@ def run(cfg):
             test_log = ''
             model = model.eval()
             for valid_dataloader in valid_dataloaders:
-                # fwd_fxn = lambda vid: model(vid[:,0])[:,None]
-                # fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
-                # def forward(lr):
-                #     with th.no_grad():
-                #         sr = fwd_fxn(lr[:,None])[:,0]
-                #     return sr
+                fwd_fxn = lambda vid: model(vid[:,0])[:,None]
+                fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
+                def chunk_forward(lr):
+                    sr = fwd_fxn(lr[:,None])[:,0]
+                    return sr
                 avg_psnr, avg_ssim = 0.0, 0.0
                 name = valid_dataloader['name']
                 loader = valid_dataloader['dataloader']
@@ -250,14 +278,17 @@ def run(cfg):
                     if cfg.denoise:
                         lr = hr + cfg.sigma*th.randn_like(hr)
                     lr, hr = lr.to(device), hr.to(device)
-                    if cfg.topk > 600:
-                        lr = lr[:,:,:256]
-                        hr = hr[:,:,:cfg.upscale*256]
+                    # if cfg.topk > 600:
+                    #     lr = lr[:,:,:256]
+                    #     hr = hr[:,:,:cfg.upscale*256]
                     torch.cuda.empty_cache()
                     # sr = forward(lr)
                     # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
                     with th.no_grad():
-                        sr = model(lr)
+                        if cfg.topk > 500:
+                            sr = chunk_forward(lr)
+                        else:
+                            sr = model(lr)
                     # quantize output to [0, 255]
                     hr = hr.clamp(0, 255)
                     sr = sr.clamp(0, 255)

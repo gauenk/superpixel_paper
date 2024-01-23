@@ -17,19 +17,21 @@ from natten import NeighborhoodAttention2D
 
 class GenSP(nn.Module):
     def __init__(self, n_iter=2,M=0.,stoken_size=8,
-                 affinity_softmax=1., softmax_order="v0"):
+                 affinity_softmax=1., softmax_order="v0", use_grad=False):
         super().__init__()
         self.n_iter = n_iter
         self.M = M
         self.stoken_size = stoken_size
         self.affinity_softmax = affinity_softmax
         self.softmax_order = softmax_order
+        self.use_grad = use_grad
 
     def forward(self, x):
         soft_association, num_spixels = ssn_iter(x, self.stoken_size,
                                                  self.n_iter, self.M,
                                                  self.affinity_softmax,
-                                                 self.softmax_order
+                                                 self.softmax_order,
+                                                 self.use_grad
         )
         return soft_association, num_spixels
 
@@ -97,7 +99,7 @@ def get_hard_abs_labels(affinity_matrix, init_label_map, num_spixels_width):
 
 
 def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
-             affinity_softmax=1., softmax_order="v0"):
+             affinity_softmax=1., softmax_order="v0", use_grad=False):
     """
     computing assignment iterations
     detailed process is in Algorithm 1, line 2 - 6
@@ -118,10 +120,14 @@ def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
     num_spixels = num_spixels_height * num_spixels_width
 
     # -- add grid --
-    from stnls.dev.slic.utils import append_grid
+    from stnls.dev.slic.utils import append_grid,add_grid
     # print("pixel_features.shape: ",pixel_features.shape,M/stoken_size[0])
+    # pixel_features = append_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
     pixel_features = append_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
+    # pixel_features = add_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
+    # print(pixel_features[:,:-2,:,:].abs().mean(),pixel_features[:,2:,:,:].abs().mean())
     # print("pixel_features.shape: ",pixel_features.shape)
+    # exit()
     shape = pixel_features.shape
 
     # import pdb; pdb.set_trace()
@@ -138,7 +144,7 @@ def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
     permuted_pixel_features = pixel_features.permute(0, 2, 1).contiguous()
     assert softmax_order in ["v0","v1"], "Softmax order must be v0, v1."
 
-    with torch.no_grad():
+    with torch.set_grad_enabled(use_grad):
         for k in range(n_iter):
 
             # -- compute all affinities  --

@@ -30,8 +30,9 @@ class SPA(nn.Module):
 
     def __init__(self, dim, num_heads, qk_dim, est_marginal_sp,
                  topk=32, qkv_bias=False, qk_scale=None, attn_drop=0.,
-                 kweight=True,out_weight=True,
-                 attn_normz="map",normz_nsamples=10,scatter_normz=False):
+                 vweight=True,out_weight=True,
+                 attn_normz="map",normz_nsamples=10,scatter_normz=False,
+                 dist_type="l2"):
         super().__init__()
         self.dim = dim
         self.qk_dim = qk_dim
@@ -41,13 +42,14 @@ class SPA(nn.Module):
         self.normz_nsamples = normz_nsamples
         self.scatter_normz = scatter_normz
         self.est_marginal_sp = est_marginal_sp
+        self.dist_type = dist_type
 
         self.q = nn.Conv2d(dim, qk_dim, 1, bias=qkv_bias)
         self.k = nn.Conv2d(dim, qk_dim, 1, bias=qkv_bias)
         self.v = nn.Conv2d(dim, dim, 1, bias=qkv_bias)
 
         self.norm = LayerNorm2d(dim)
-        self.kweight = kweight
+        self.vweight = vweight
         self.out_weight = out_weight
 
         self.attn_drop = nn.Dropout(attn_drop)
@@ -80,7 +82,16 @@ class SPA(nn.Module):
         V_sp = reshape_it(sample_it(v,self.dim))
 
         # -- compute attention weights --
-        attn = (Q_sp @ K_sp.transpose(-2,-1)) * self.scale # b k h topk topk
+        if self.dist_type == "prod":
+            attn = (Q_sp @ K_sp.transpose(-2,-1)) * self.scale # b k h topk topk
+        elif self.dist_type == "l2":
+            _B,_K,_H = Q_sp.shape[:3]
+            Q_sp = rearrange(Q_sp,'b k h k1 k2 -> (b k h) k1 k2')
+            K_sp = rearrange(K_sp,'b k h k1 k2 -> (b k h) k1 k2')
+            attn = -self.scale*th.cdist(Q_sp,K_sp)
+            attn = rearrange(attn,'(b k h) k1 k2 -> b k h k1 k2',b=_B,k=_K,h=_H)
+        else:
+            raise ValueError(f"Uknown dist type [{self.dist_type}]")
         attn = normalize_attention(self.attn_normz,attn,sims,mask,self.normz_nsamples)
         attn = self.attn_drop(attn)
 
@@ -93,7 +104,7 @@ class SPA(nn.Module):
         weight = sims[:,:,None,:,None].expand_as(V_sp) if valid_sims else None
 
         # -- P(L[j] = s) for i ~ j --
-        if self.kweight: V_sp = weight *  V_sp
+        if self.vweight: V_sp = weight *  V_sp
         out = attn @ V_sp # b k h topk c
         # -- P(L[i] = s) for i pixels --
         if self.out_weight: out = weight * out
@@ -104,9 +115,9 @@ class SPA(nn.Module):
 
         out = rearrange(out, 'b k h t c -> b (h c) (k t)')
         if valid_sims: weight = rearrange(weight,'b k h t c -> b (h c) (k t)')
-        out,cnt = scatter_mean(v.reshape(B, self.dim, H*W), -1,
-                           indices.reshape(B, 1, -1).expand(-1, self.dim, -1),
-                           out,weight,self.scatter_normz)
+        out,cnt,wght = scatter_mean(v.reshape(B, self.dim, H*W), -1,
+                                    indices.reshape(B, 1, -1).expand(-1, self.dim, -1),
+                                    out,weight,self.scatter_normz)
         out = out.reshape(B, C, H, W)
 
         # -- mask --
@@ -114,9 +125,14 @@ class SPA(nn.Module):
         # if cnt.min().item() == 0:
         #     print(cnt)
         #     exit()
-        mask = (cnt>0.).type(th.float)
-        # print(mask.mean(),mask.min(),mask.max())
-        out = mask * out + (1-mask)*x
+        if self.scatter_normz == "sum2one":
+            mask = wght.reshape(B, C, H, W)
+            # print(mask)
+            # print((mask + (1-mask)).min(),(mask + (1-mask)).min())
+        else:
+            mask = (cnt>1e-5).type(th.float)
+        out = mask * out + (1-mask)*v
+        # print("post: ",out.min().item(),out.max().item())
         # print(out.min(),out.max())
 
 
@@ -145,7 +161,10 @@ class SpaGmmSampling(nn.Module):
         # -- precomputing --
         amatrix, num_spixels = self.est_marginal_sp(x)
         sims, indices = torch.topk(amatrix, self.topk, dim=-1) # B, K, topk
-        amatrix = rearrange(amatrix,'b s k -> (b s) k')
+        # amatrix = rearrange(amatrix,'b s k -> (b s) k')
+        amatrix = rearrange(amatrix,'b s k -> s (b k)') #? check nsp.py
+        print("not here.")
+        exit()
 
         # -- get sample --
         labels = th.multinomial(amatrix.T,num_samples=1)

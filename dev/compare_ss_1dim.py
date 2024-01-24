@@ -315,7 +315,7 @@ def main():
     # -- neighborhood --
     #
 
-    ksize = 6
+    ksize = 11
     tofill = th.zeros(len(nb))
     for i in range(len(nb)):
         si = max(i - ksize//2,0)

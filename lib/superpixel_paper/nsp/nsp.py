@@ -33,9 +33,13 @@ class NeighborhoodSuperpixelAttention(nn.Module):
         # -- superpixels --
         self.vweight=vweight
         self.oweight=oweight
-        self.qk_scale = qk_scale
         self.attn_normz=attn_normz
         self.mask_labels = mask_labels
+
+        # -- scaling --
+        self.num_heads = num_heads
+        self.head_dim = dim // self.num_heads
+        self.qk_scale = qk_scale or self.head_dim**-0.5
 
         # -- neighborhood attn --
         bias = False
@@ -74,7 +78,7 @@ class NeighborhoodSuperpixelAttention(nn.Module):
         # exit()
 
         # -- innter product --
-        x = self.nat_agg(x,attn,labels)
+        x = self.nat_agg(x,attn)
         # print("b:",th.any(th.isnan(x)))
         # exit()
 

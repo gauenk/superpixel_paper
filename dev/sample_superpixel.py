@@ -56,7 +56,8 @@ def load_chick(cfg):
     vid = vid_io.read_video("data/crop_cat_chicken")[None,:]/255.
     vid = vid.to(device)
     seg = None
-    vid = vid[...,62:62+156,120:120+156]
+    # vid = vid[...,62:62+156,120:120+156]
+    # vid = vid[...,0:0+156,0:156]
     print("vid.shape: ",vid.shape)
     return vid,seg
 
@@ -166,11 +167,13 @@ def main():
     # S = 12
     S = 10
     nH,nW = (H-1)//S+1,(W-1)//S+1
-    M = 0.2
+    # M = 0.2
+    M = 10.
     # ws = 28
     ws = 24
     # affinity_softmax = 20.
-    affinity_softmax = 30.
+    # affinity_softmax = 30.
+    affinity_softmax = 2.
     suffix = "s%d"%S + "_" + "m"+str(M).replace(".","p")
     # print("ftrs.shape: ",ftrs.shape)
 
@@ -186,6 +189,7 @@ def main():
     # -- pick pixel --
     i,j = H//2+7,W//2-25 # center pixel
     VW = 64 # viz window size
+    # VW = 128 # viz window size
     sH,eH = i-VW//2,i+VW//2
     sW,eW = j-VW//2,j+VW//2
     a,b = VW//2,VW//2

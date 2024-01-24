@@ -12,10 +12,10 @@ from dev_basics.utils.misc import ensure_chnls
 from dev_basics.utils.metrics import compute_psnrs,compute_ssims,compute_strred
 
 # -- plotting --
+import pylab
 import seaborn as sns
 import matplotlib.pyplot as plt
 from torchvision.utils import draw_segmentation_masks
-
 
 # -- better res --
 import torchvision.transforms.functional as TF
@@ -41,10 +41,13 @@ class AttentionHook():
 
     def __init__(self,net):
         self.net = net
+        # print([name for name,_ in self.net.named_modules()])
 
         # -- known buffer names --
         self.bufs = ["q_shell","k_shell","v_shell","attn_shell",
-                     "imgSp_shell_attn","imgSp_shell_agg"]
+                     "imgSp_shell_attn","imgSp_shell_agg","spa_shell",
+                     "skipped_x_shell","pre_layernorm","post_layernorm",
+                     "pre_conv","post_conv"]
         for buf in self.bufs:
             setattr(self,buf,[])
 
@@ -74,11 +77,12 @@ def load_video(cfg):
     cfg.nframes = 1
     cfg.batch_size_tr = 1
     device = "cuda:0"
+    cfg.nsamples_val = 0
     data,loaders = data_hub.sets.load(cfg)
     indices = data_hub.filter_subseq(data[cfg.dset],cfg.vid_name,0,cfg.nframes)
-    vid = data[cfg.dset][indices[0]]['clean'][None,:].to(device)/255.
-    noisy = data[cfg.dset][indices[0]]['noisy'][None,:].to(device)/255.
-    return vid[:,0]
+    vid = data[cfg.dset][indices[0]]['clean'][None,:].to(device)#/255.
+    noisy = data[cfg.dset][indices[0]]['noisy'][None,:].to(device)#/255.
+    return noisy[:,0]
 
 def apply_hooks(net):
     hook = AttentionHook(net)
@@ -93,13 +97,26 @@ def sp_to_mask(imgSp):
     masks = th.cat(masks)
     return masks
 
+
 def draw_seg(img,imgSp):
+    ncols = 1500
+    # cm = pylab.get_cmap('gist_rainbow')
+    cm = pylab.get_cmap('prism')
+    def index2color(i):
+        nmax = 200
+        cm_i = ((1.*(i%nmax))/nmax) % 1
+        color = [int(255.*i.item()) for i in cm(cm_i)]
+        color = [color[0],color[1],color[2]]
+        return tuple(color)
+
+    # -- masks --
     masks = sp_to_mask(imgSp)
     img_ui = th.clamp(255*img,0,255).type(th.uint8)[0].cpu()
-    # label_color_map = [(i%2==0,i%3==0,i%4==0) for i in th.arange(200)]
+    color_map = [index2color(i%ncols) for i in range(ncols)]
     seg_result = draw_segmentation_masks(
-        img_ui, masks.cpu(), alpha=0.3,
-        # colors=label_color_map,
+        img_ui*0, masks.cpu(), alpha=0.3,
+        # colors="blue",
+        colors=color_map,
     )
     return seg_result.to(img.device)
 
@@ -130,14 +147,15 @@ def main():
     seed_everything(seed)
 
     # -- read config --
-    fn_a = "exps/trte_deno/viz_attn_layer.cfg"
+    # fn_a = "exps/trte_deno/viz_attn_layer.cfg"
+    fn_a = "exps/trte_deno/train.cfg"
     fn_b = ".cache_io_exps/trte_deno/viz_attn_layer/"
-    refresh = False
+    refresh = True
     read_test = cache_io.read_test_config.run
-    exps = read_test(fn_a,fn_b,reset=refresh,skip_dne=refresh)
-    exps,_uuids = cache_io.get_uuids(exps,".cache_io_exps/viz_attn_layer/",
-                                    read=not(refresh),no_config_check=False)
-    # exps,uuids = cache_io.train_stages.run(fn_a,fn_b,update=True)
+    # exps = read_test(fn_a,fn_b,reset=refresh,skip_dne=refresh)
+    # exps,_uuids = cache_io.get_uuids(exps,".cache_io_exps/viz_attn_layer/",
+    #                                 read=not(refresh),no_config_check=False)
+    exps,_uuids = cache_io.train_stages.run(fn_a,fn_b,update=True)
 
     # -- load models --
     device = "cuda:0"
@@ -146,12 +164,17 @@ def main():
     for uuid,exp in zip(_uuids,exps):
         uuid_s = str(uuid)[:4]
         cfg = extract_deno_defaults(exp)
-        cfg.M = 0.001
+        # cfg.M = 0.001
+        # cfg.M = 0.1
+        # cfg.M = 0.02
+        # cfg.M = 0.5
+        # cfg.M = 10.
         # cfg.M = 0.002
         config_via_spa(cfg)
         uuids.append(uuid_s)
         cfgs.append(cfg)
-        print(uuid_s,cfg.spa_version,cfg.spa_scale,cfg.nsa_mask_labels)
+        # print(uuid_s,cfg.spa_version,cfg.spa_scale,cfg.nsa_mask_labels)
+        print(uuid_s,cfg.nsa_mask_labels,cfg.use_skip)
         import_str = 'superpixel_paper.models.{}'.format(cfg.model)
         model = utils.import_module(import_str).create_model(cfg).to(device)
         hook = apply_hooks(model)
@@ -162,7 +185,8 @@ def main():
     # -- load hooks with values --
     keys = uuids
     vid = load_video(cfg)
-    vid = vid[...,190:190+156,400:400+156].contiguous()
+    # vid = vid[...,190:190+156,400:400+156].contiguous()
+    vid = vid[...,:,128:-128].contiguous()
     print(vid.shape)
     for key in keys: models[key](vid)
 
@@ -171,6 +195,43 @@ def main():
     # --    Explore; Set Sail!    --
     #
     # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+    # -- hooks --
+    vid_m = vid.mean(1,keepdim=True)/255.
+    # print(vid.shape,vid_m.shape)
+    # print(hooks[keys[0]].spa_shell[0].shape)
+    dim_sel = 1
+    print([hooks[k].spa_shell[0][0,[dim_sel],64:68,64:68] for k in keys])
+    def est_var(lname):
+        est_vars = {}
+        for k in keys:
+            est_var = 0
+            for i in range(9):
+                est_var += getattr(hooks[k],lname)[0][0,[dim_sel]].var().item()
+            est_vars[k] = est_var/9
+        print(est_vars)
+    print("-"*30)
+    print("-"*30)
+    print((vid/255.).var().item())
+    est_var('pre_conv')
+    est_var('post_conv')
+    print("-"*10)
+    est_var('pre_layernorm')
+    est_var('post_layernorm')
+    print("-"*10)
+    est_var('spa_shell')
+    est_var('skipped_x_shell')
+    print("-"*30)
+    print("-"*30)
+    # print([hooks[k].spa_shell[0][0,[dim_sel]].var() for k in keys])
+    spa_out = th.cat([vid_m]+[hooks[k].spa_shell[0][:,[dim_sel]] for k in keys])
+    eps = 1e-6
+    spa_out = th.stack([x.abs()/(x.abs().max()+eps) for x in spa_out])
+    print([x.max() for x in spa_out])
+    nrow = len(spa_out)
+    print(spa_out.shape)
+    grid = make_grid(spa_out,nrow=nrow,pad_value=0.)[None,:]
+    save_image(grid/grid.max(),"spa.png")
 
     # -- explore sp --
     imgSp = th.stack([draw_seg(vid,hooks[k].imgSp_shell_attn[0]) for k in keys])
@@ -199,17 +260,18 @@ def main():
     attns = rearrange(attns,'g 1 1 h w (k0 k1) -> g h w k0 k1',k0=K)
     print(attns.shape)
 
-
     # -- save viz --
-    nrow = attns.shape[0]
-    print(attns[:,0,0,:3,:3])
-    grid = make_grid(attns[:,64,64],nrow=nrow,pad_value=1.)[:,None]
-    print(grid.shape)
-    save_image(grid/grid.max(),"grid_64_64.png")
-    grid = make_grid(attns[:,32,32],nrow=nrow,pad_value=1.)[:,None]
-    print(grid.shape)
-    save_image(grid/grid.max(),"grid_32_32.png")
-
+    points = [[250,64],[250,96],[228,128]]
+    for point in points:
+        x,y = point
+        nrow = attns.shape[0]
+        print(attns[:,x,y,:3,:3])
+        grid = make_grid(attns[:,x,y],nrow=nrow,pad_value=1.)[:,None]
+        print(grid.shape)
+        save_image(grid/grid.max(),"grid_%d_%d.png" % (x,y))
+    # grid = make_grid(attns[:,228,128],nrow=nrow,pad_value=1.)[:,None]
+    # print(grid.shape)
+    # save_image(grid/grid.max(),"grid_228_128.png")
 
     print(attns.shape)
     grid = make_grid(attns[:,:,:,3,3],nrow=nrow,pad_value=1.)[:,None]
@@ -218,8 +280,10 @@ def main():
     save_image(grid/grid.max(),"grid_hw_0.png")
 
     print("vid.shape: ",vid.shape)
-    vid[:,:,32,32] = 1
-    vid[:,:,64,64] = 1
+
+    for point in points:
+        x,y = point
+        vid[:,:,x-2:x+2,y-2:y+2] = 1
     save_image(vid,"vid.png")
 
 

@@ -16,7 +16,7 @@ import superpixel_cuda
 from natten.functional import natten2dav, natten2dqkrpb
 
 
-class NeighSuperpixelAgg(nn.Module):
+class SoftNeighSuperpixelAgg(nn.Module):
     """
     1D QK+RPB autograd function
     Computes neighborhood attention weights given queries and keys,
@@ -67,7 +67,7 @@ class NeighSuperpixelAgg(nn.Module):
         # -- viz --
         self.v_shell = nn.Identity()
 
-    def forward(self, x, attn):
+    def forward(self, x, attn, sims, sinds):
         B, Hp, Wp, C = x.shape
         H, W = int(Hp), int(Wp)
         pad_l = pad_t = pad_r = pad_b = 0
@@ -83,7 +83,7 @@ class NeighSuperpixelAgg(nn.Module):
         attn = self.attn_drop(attn)
         v = self.v_shell(v)
 
-        x = NeighSuperpixelAggFunction.apply(v,attn)
+        x = SoftNeighSuperpixelAggFunction.apply(v,attn,sims,sinds)
         x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
         if pad_r or pad_b:
             x = x[:, :Hp, :Wp, :]
@@ -96,10 +96,10 @@ class NeighSuperpixelAgg(nn.Module):
         )
 
 
-class NeighSuperpixelAggFunction(Function):
+class SoftNeighSuperpixelAggFunction(Function):
 
     @staticmethod
-    def forward(ctx, values, attn):
+    def forward(ctx, values, attn, sims, sinds):
 
         # -- aggregate --
         dilation = 1
@@ -107,8 +107,8 @@ class NeighSuperpixelAggFunction(Function):
         attn = attn.contiguous()
         values = values.contiguous()
         out = th.zeros_like(values)
-        superpixel_cuda.nsa_agg_forward(out, attn, values)
-        ctx.save_for_backward(attn, values, out)
+        superpixel_cuda.ssna_agg_forward(out, attn, values, sims, sinds)
+        ctx.save_for_backward(attn, values, out, sims, sinds)
         ctx.dilation = dilation
 
         return out
@@ -118,15 +118,16 @@ class NeighSuperpixelAggFunction(Function):
 
         d_attn = th.zeros_like(ctx.saved_variables[0])
         d_imgV = th.zeros_like(ctx.saved_variables[1])
+        d_sims = th.zeros_like(ctx.saved_variables[3])
 
-        superpixel_cuda.nsa_agg_backward(
-            d_attn,d_imgV,grad_imgOut,
+        superpixel_cuda.ssna_agg_backward(
+            d_attn,d_imgV,d_sims,grad_imgOut,
             ctx.saved_variables[0],
             ctx.saved_variables[1],
             ctx.saved_variables[2],
+            ctx.saved_variables[3],
+            ctx.saved_variables[4]
         )
-        return d_imgV, d_attn
 
+        return d_imgV, d_attn, d_sims, None
 
-# def nsa_aggregate(attn,value,weights,dilation):
-#     return NeighSuperpixelAgg.apply(attn,value,weights,dilation)

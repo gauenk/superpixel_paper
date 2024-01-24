@@ -161,12 +161,13 @@ def main():
 
     W = 96
     hi,wi = 115,130
+    # hi,wi = 200,200
     sh,sw = hi-W//2,wi-W//2
     eh,ew = sh+W,sw+W
-    img = irz(img[sh:eh,sw:ew],96*2,96*2)
-    sp = irz(sp[sh:eh,sw:ew],96*2,96*2)
-    sp_l = irz(sp,96*4,96*4)
-    sp_id = sp[64,64]
+    img = irz(img[sh:eh,sw:ew],W*2,W*2)
+    sp = irz(sp[sh:eh,sw:ew],W*2,W*2)
+    sp_l = irz(sp,W*4,W*4)
+    sp_id = sp[100,130]
 
     # -- viz image and seg --
     img_v = viz_loc_sp_seg(img.copy(),sp==sp_id)
@@ -184,19 +185,19 @@ def main():
     Image.fromarray(irz(sp_img,128,128)).save("viz_sp.png")
 
     # -- viz top-k sp --
-    K = 300
+    K = 100
     sp_img,hmid,wmid,sp_id = viz_sp(img.copy(),sp,sp_id)
     sp_img = topk_sampling(sp_img.copy(),K)
     Image.fromarray(irz(sp_img,128,128)).save("viz_ksp.png")
 
     # - -viz local region --
-    ksize = 22
-    vsize = 55
+    ksize = 17
+    vsize = 32
     loc_img = viz_sp_square(img.copy(),sp,sp_id,hmid,wmid,ksize,vsize)
     Image.fromarray(irz(loc_img,128,128)).save("viz_sp_loc.png")
 
-    ksize = 22
-    vsize = 55
+    # ksize = 17
+    # vsize = 55
     loc_img = viz_square(img.copy(),hmid,wmid,ksize,vsize)
     Image.fromarray(irz(loc_img,128,128)).save("viz_loc.png")
 

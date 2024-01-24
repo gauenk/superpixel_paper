@@ -111,6 +111,18 @@ def config_via_spa(cfg):
                 print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
+    elif spa == "ssna":
+        pairs = {"use_ssna":True,
+                 "use_intra":False,
+                 "use_spa":False,
+                 "use_nat":False,
+                 "use_conv":False,
+                 "gen_sp_type":"reshape"}
+        for key,val in pairs.items():
+            if key in cfg:
+                print(": not setting %s:%s" %(str(key),str(cfg[key])))
+                continue
+            cfg[key] = val
     elif spa == "bass_mle":
         pairs = {"spa_attn_normz":"mle",
                  "spa_vweight":False,

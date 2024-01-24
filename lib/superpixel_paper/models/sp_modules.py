@@ -13,11 +13,13 @@ from einops import rearrange
 from superpixel_paper.est_attn_normz import EffNormzFunction
 from spin.models.pair_wise_distance import PairwiseDistFunction
 from natten import NeighborhoodAttention2D
+# from .stnls_gen_sp import stnls_ssn_iter
 
 
 class GenSP(nn.Module):
     def __init__(self, n_iter=2,M=0.,stoken_size=8,
-                 affinity_softmax=1., softmax_order="v0", use_grad=False):
+                 affinity_softmax=1., softmax_order="v0", use_grad=False,
+                 gen_sp_type="default"):
         super().__init__()
         self.n_iter = n_iter
         self.M = M
@@ -25,15 +27,24 @@ class GenSP(nn.Module):
         self.affinity_softmax = affinity_softmax
         self.softmax_order = softmax_order
         self.use_grad = use_grad
+        self.gen_sp_type = gen_sp_type
+        self.reshape_output = gen_sp_type == "reshape"
 
     def forward(self, x):
-        soft_association, num_spixels = ssn_iter(x, self.stoken_size,
-                                                 self.n_iter, self.M,
-                                                 self.affinity_softmax,
-                                                 self.softmax_order,
-                                                 self.use_grad
-        )
-        return soft_association, num_spixels
+        sims, num_spixels = ssn_iter(x, self.stoken_size,
+                                     self.n_iter, self.M,
+                                     self.affinity_softmax,
+                                     self.softmax_order,
+                                     self.use_grad,
+                                     self.return_sparse)
+        if self.reshape_output:
+            H = x.shape[-2]
+            sH = (H-1)//stoken_size[0]
+            print("sims.shape: ",sims.shape)
+            shape_str = 'b (h w) (sh sw) -> b h w sh sw'
+            sims = rearrange(sims,shape_str,h=H,sh=sH)
+
+        return sims, num_spixels
 
 def calc_init_centroid(images, num_spixels_width, num_spixels_height):
     """
@@ -98,8 +109,10 @@ def get_hard_abs_labels(affinity_matrix, init_label_map, num_spixels_width):
     return label.long()
 
 
-def ssn_iter(pixel_features, stoken_size=[16, 16], n_iter=2, M = 0.,
-             affinity_softmax=1., softmax_order="v0", use_grad=False):
+def ssn_iter(pixel_features, stoken_size=[16, 16],
+             n_iter=2, M = 0., affinity_softmax=1.,
+             softmax_order="v0", use_grad=False,
+             return_sparse=False):
     """
     computing assignment iterations
     detailed process is in Algorithm 1, line 2 - 6

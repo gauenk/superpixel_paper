@@ -15,9 +15,9 @@ import superpixel_cuda
 
 from natten.functional import natten2dav, natten2dqkrpb
 
-class NeighSuperpixelAttn(nn.Module):
+class SoftNeighSuperpixelAttn(nn.Module):
     """
-    Neighborhood Attention 2D Module
+    Soft Neighborhood Attention 2D Module
     """
 
     def __init__(
@@ -55,10 +55,10 @@ class NeighSuperpixelAttn(nn.Module):
         # -- viz --
         self.q_shell = nn.Identity()
         self.k_shell = nn.Identity()
-        self.imgSp_shell_attn = nn.Identity()
+        self.sims_shell_attn = nn.Identity()
         self.attn_shell = nn.Identity()
 
-    def forward(self, x, imgSp):
+    def forward(self, x, sims, sinds):
         B, Hp, Wp, C = x.shape
         H, W = int(Hp), int(Wp)
         pad_l = pad_t = pad_r = pad_b = 0
@@ -83,9 +83,9 @@ class NeighSuperpixelAttn(nn.Module):
 
         q = self.q_shell(q)
         k = self.k_shell(k)
-        imgSp = self.imgSp_shell_attn(imgSp)
+        sims = self.sims_shell_attn(sims)
         # attn = natten2dqkrpb(q, k, None, self.kernel_size, 1)
-        attn = NeighSuperpixelAttnFunction.apply(q,k,imgSp,self.kernel_size)
+        attn = SoftNeighSuperpixelAttnFunction.apply(q,k,sims,sinds,self.kernel_size)
         attn = self.attn_shell(attn)
         return attn
 
@@ -96,50 +96,42 @@ class NeighSuperpixelAttn(nn.Module):
         )
 
 
-class NeighSuperpixelAttnFunction(Function):
+class SoftNeighSuperpixelAttnFunction(Function):
 
     @staticmethod
-    def forward(ctx, queries, keys, imgSp, kernel_size):
+    def forward(ctx, queries, keys, sims, sinds, kernel_size):
 
         # -- aggregate --
         dilation = 1
         assert dilation == 1
         queries = queries.contiguous()
         keys = keys.contiguous()
-
-        B,HD,H,W,F = queries.shape
-        # attn = th.zeros((B,HD,H,W,kernel_size**2)).to(queries.device)
-        attn = -th.inf * th.ones((B,HD,H,W,kernel_size**2),
+        B,HD,H,W,F = keys.shape
+        attn = -th.inf * th.ones((B,HD,9,H,W,kernel_size**2),
                                  dtype=queries.dtype).to(queries.device)
-        superpixel_cuda.nsa_attn_forward(attn, queries, keys, imgSp)
-        ctx.save_for_backward(queries, keys, imgSp, attn)
+        superpixel_cuda.ssna_attn_forward(attn, queries, keys, sims, sinds)
+        ctx.save_for_backward(queries, keys, attn, sims, sinds)
         ctx.dilation = dilation
-        # print("here: ",attn.min().item(),attn.max().item())
-        # print(imgSp)
-        # if th.any(th.isinf(attn)).item():
-        #     print("hi.")
-        #     exit()
-        # print("yo.")
-        # exit()
-        #     print(th.any(th.isinf(attn)).item())
-        #     print(th.where(th.isinf(attn)))
-        #     print(queries.shape,keys.shape,attn.shape,kernel_size)
-        #     exit()
 
         return attn
 
     @staticmethod
     def backward(ctx, d_attn):
 
+
+        # -- allocate --
         d_queries = th.zeros_like(ctx.saved_variables[0])
         d_keys = th.zeros_like(ctx.saved_variables[1])
-        d_imgSp = th.zeros_like(ctx.saved_variables[2]).type(d_queries.dtype)
-        superpixel_cuda.nsa_attn_backward(
-            d_queries,d_keys,d_imgSp,d_attn,
+        d_sims = th.zeros_like(ctx.saved_variables[3])
+
+        # -- exec --
+        superpixel_cuda.ssna_attn_backward(
+            d_queries,d_keys,d_sims,d_attn,
             ctx.saved_variables[0],
             ctx.saved_variables[1],
-            ctx.saved_variables[2]
-            # ctx.saved_variables[3]
+            ctx.saved_variables[2],
+            ctx.saved_variables[3],
+            ctx.saved_variables[4],
         )
-        return d_queries, d_keys, d_imgSp, None
+        return d_queries, d_keys, d_sims, None, None
 

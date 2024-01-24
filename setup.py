@@ -40,6 +40,8 @@ setup(
             'lib/superpixel_paper/est_attn_normz/eff_normz_cuda_source.cu',
             "lib/superpixel_paper/nsp/nsa_agg_cuda_source.cu",
             "lib/superpixel_paper/nsp/nsa_attn_cuda_source.cu",
+            "lib/superpixel_paper/ssna/ssna_attn_cuda_source.cu",
+            "lib/superpixel_paper/ssna/ssna_agg_cuda_source.cu",
             "lib/superpixel_paper/pybind.cpp",
             # 'lib/superpixel_paper/nsp/nsa_agg_cuda_source.cu',
         ],

@@ -1,3 +1,3 @@
 from .sna import NeighborhoodSuperpixelAttention,SnaGmmSampling
-from .nsa_attn import NeighSuperpixelAttn,NeighSuperpixelAttnFunction
+from .sna_attn import NeighSuperpixelAttn,NeighSuperpixelAttnFunction
 from .sna_agg import NeighSuperpixelAgg,NeighSuperpixelAggFunction

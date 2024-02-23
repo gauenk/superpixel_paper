@@ -117,7 +117,7 @@ class NeighSuperpixelAggFunction(Function):
         attn = attn.contiguous()
         values = values.contiguous()
         out = th.zeros_like(values)
-        superpixel_cuda.nsa_agg_forward(out, attn, values)
+        superpixel_cuda.sna_agg_forward(out, attn, values)
         ctx.save_for_backward(attn, values, out)
         ctx.dilation = dilation
 
@@ -129,7 +129,7 @@ class NeighSuperpixelAggFunction(Function):
         d_attn = th.zeros_like(ctx.saved_variables[0])
         d_imgV = th.zeros_like(ctx.saved_variables[1])
 
-        superpixel_cuda.nsa_agg_backward(
+        superpixel_cuda.sna_agg_backward(
             d_attn,d_imgV,grad_imgOut,
             ctx.saved_variables[0],
             ctx.saved_variables[1],

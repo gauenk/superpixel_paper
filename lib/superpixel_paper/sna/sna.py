@@ -29,7 +29,8 @@ class NeighborhoodSuperpixelAttention(nn.Module):
                  dilation=1,bias=False,qkv_bias=False,qk_scale=None,
                  attn_drop=0.0,proj_drop=0.0,mask_labels=False,
                  use_proj=True,use_weights=True,
-                 qk_layer=None,v_layer=None,proj_layer=None):
+                 qk_layer=None,v_layer=None,proj_layer=None,
+                 learn_attn_scale=False):
         super().__init__()
 
         # -- superpixels --
@@ -38,7 +39,6 @@ class NeighborhoodSuperpixelAttention(nn.Module):
         # -- scaling --
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
-        self.qk_scale = qk_scale or self.head_dim**-0.5
         self.use_weights = use_weights
 
         # -- neighborhood attn --
@@ -46,8 +46,11 @@ class NeighborhoodSuperpixelAttention(nn.Module):
         self.nat_mat = NeighSuperpixelAttn(dim=dim,
                                            kernel_size=kernel_size,
                                            num_heads=num_heads,
-                                           qk_bias=bias,use_weights=use_weights,
-                                           qk_layer=qk_layer)
+                                           qk_bias=bias,
+                                           use_weights=use_weights,
+                                           qk_layer=qk_layer,
+                                           learn_attn_scale=learn_attn_scale,
+                                           qk_scale=qk_scale)
         self.nat_agg = NeighSuperpixelAgg(dim=dim,num_heads=num_heads,
                                           kernel_size=kernel_size,
                                           v_bias=bias,use_proj=use_proj,
@@ -66,7 +69,9 @@ class NeighborhoodSuperpixelAttention(nn.Module):
 
         # -- attn map --
         attn = self.nat_mat(x,labels)
-        attn = (self.qk_scale * attn).softmax(-1)
+
+        # -- rescale attn --
+        attn = attn.softmax(-1)
 
         # mask = (attn < 1e-8).float().detach()
         # attn = mask * attn + (1-mask)*1e-4

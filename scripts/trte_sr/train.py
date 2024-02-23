@@ -32,11 +32,12 @@ def main():
                                            update=True)
     print("Num Exps: ",len(exps))
     print(uuids)
-    exps = list(reversed(exps))
-    uuids = list(reversed(uuids))
+    # exps = list(reversed(exps))
+    # uuids = list(reversed(uuids))
     # print(exps)
     # for e in exps:
-    #     print(e.spa_version,e.topk)
+    #     print(e.upscale)
+    #     # print(e.spa_version,e.topk)
     # exit()
 
     # -- run exps --

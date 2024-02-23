@@ -27,7 +27,10 @@ def main():
 
     # -- get experiments --
     def clear_fxn(num,cfg): return False
-    exps,uuids = cache_io.train_stages.run("exps/trte_deno/train.cfg",
+    # exp_fn = "exps/trte_deno/train_snet.cfg"
+    # exp_fn = "exps/trte_deno/train.cfg"
+    exp_fn = "exps/trte_deno/train_table.cfg"
+    exps,uuids = cache_io.train_stages.run(exp_fn,
                                            ".cache_io_exps/trte_deno/train/",
                                            update=True)
     print("Num Exps: ",len(exps))
@@ -37,6 +40,11 @@ def main():
     # print(exps)
     # for e in exps:
     #     print(e.spa_version,e.topk,e.sigma)
+    # exit()
+    # df =pd.DataFrame(exps)
+    # df = df[["gen_sp_type","gen_sp_use_grad","ssn_nftrs","share_gen_sp",
+    #  "use_state","use_pwd"]]
+    # print(df)
     # exit()
 
     # -- run exps --

@@ -47,6 +47,16 @@ from ..spa_config import config_via_spa
 #        opt.update(yaml_args)
 #     opt = edict(opt)
 
+def allows_sna(state):
+    new_state = dcopy(state)
+    for key,val in state.items():
+        if "nsp" in key:
+            key_new = dcopy(key).replace("nsp","sna")
+            # print(key_new,key)
+            new_state[key_new] = new_state[key].clone()
+            del new_state[key]
+    return new_state
+
 def optional(pydict,key,default):
     if pydict is None: return default
     elif key in pydict: return pydict[key]
@@ -155,7 +165,9 @@ def run(cfg):
     prev_epoch = ckpt['epoch']
 
     # mstate = cleanup_mstate(ckpt['model_state_dict'])
-    model.load_state_dict(ckpt['model_state_dict'])
+    state = ckpt['model_state_dict']
+    state = allows_sna(state)
+    model.load_state_dict(state)
     stat_dict = ckpt['stat_dict']
     print('select {} for testing'.format(chkpt_fn))
     init_keys = list(stat_dict.keys())

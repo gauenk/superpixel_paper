@@ -30,8 +30,11 @@ def main():
     refresh = True and not(read_testing)
     def clear_fxn(num,cfg): return False
     read_test = cache_io.read_test_config.run
-    exps = read_test("exps/trte_deno/test.cfg",
-                     ".cache_io_exps/trte_deno/test",reset=refresh,skip_dne=refresh)
+    # fn = "exps/trte_deno/test_early.cfg"
+    # fn = "exps/trte_deno/test_snet.cfg"
+    # fn = "exps/trte_deno/test.cfg"
+    fn = "exps/trte_deno/test_table.cfg"
+    exps = read_test(fn,".cache_io_exps/trte_deno/test",reset=refresh,skip_dne=refresh)
     exps,uuids = cache_io.get_uuids(exps,".cache_io/trte_deno/test",
                                     read=not(refresh),no_config_check=False)
     print("Num Exps: ",len(exps))
@@ -47,6 +50,9 @@ def main():
                                 use_wandb=False,proj_name="superpixels_deno_test")
 
     results = results.rename(columns={"affinity_softmax":"asm"})
+    results = results.fillna(value=-1)
+    print(results[['spa_version','gen_sp_type']])
+    print(results['spa_version'].unique())
     for sigma,sig_df in results.groupby("sigma"):
         print("-"*20)
         print("sigma: ",sigma)
@@ -54,12 +60,24 @@ def main():
         # for dname,ddf in sig_df.groupby("dname"):
         #     print("dname: ",dname)
         #     # print(ddf.columns)
-        for spa,sdf in sig_df.groupby(["spa_version","nsa_mask_labels","spa_scale","tr_uuid"]):
-        # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale","asm"]):
-        # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale"]):
-            # print("spa: ",spa)
-            print("SPA: ",spa,"%2.2f,%0.3f" %
-                  (sdf['psnrs'].mean(),sdf['ssims'].mean()))
+        for spa_version,spa_df in sig_df.groupby(["spa_version","gen_sp_type","nsa_mask_labels","share_gen_sp","conv_ksize","use_ffn"]):
+            # print(spa_version)
+            # print(spa_df['psnrs'])
+            # exit()
+            print("SPA: ",spa_version,"%2.2f,%0.3f" %
+                  (spa_df['psnrs'].mean(),spa_df['ssims'].mean()))
+
+            # fields = ["block_num","conv_ksize"]
+        #     fields = ["use_state","use_pwd","ssn_nftrs"]
+
+        #     spa_df = spa_df.sort_values(fields)
+        #     for spa,sdf in spa_df.groupby(fields+["tr_uuid",],sort=False):
+        # #for spa,sdf in sig_df.groupby(["spa_version","nsa_mask_labels","spa_scale","tr_uuid","block_num","conv_ksize"]):
+        # # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale","asm"]):
+        # # for spa,sdf in sig_df.groupby(["spa_version","topk","spa_scale"]):
+        #     # print("spa: ",spa)
+        #         print("SPA: ",spa,"%2.2f,%0.3f" %
+        #               (sdf['psnrs'].mean(),sdf['ssims'].mean()))
             # print(sdf[['iname','psnrs','ssims']])
 
     df = results[results['dname']=='b100']

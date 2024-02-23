@@ -12,7 +12,7 @@ def config_via_spa(cfg):
                 print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
-    elif spa == "nsa_mle":
+    elif spa in ["nsa_mle","sna"]:
         pairs = {"spa_attn_normz":"mle",
                  "spa_vweight":False,
                  "spa_oweight":False,
@@ -167,11 +167,11 @@ def config_via_spa(cfg):
         cfg.use_intra = False
         cfg.use_spa = False
         cfg.use_nat = False
-    elif spa == "sna":
-        cfg.use_intra = False
-        cfg.use_spa = False
-        cfg.use_nsp = True
-        cfg.use_sna = True
+    # elif spa == "sna":
+    #     cfg.use_intra = False
+    #     cfg.use_spa = False
+    #     cfg.use_nsp = True
+    #     cfg.use_sna = True
     elif spa == "nsp":
         cfg.use_intra = False
         cfg.use_spa = False

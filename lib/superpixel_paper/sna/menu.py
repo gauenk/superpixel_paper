@@ -44,8 +44,8 @@ def load_sna(sna_version,dim,heads,qk_dim,gen_sp,**kwargs):
                                                     use_weights=cfg.use_weights,
                                                     use_proj=cfg.use_proj,
                                                     qk_layer=qk_layer,v_layer=v_layer,
-                                                    proj_layer=proj_layer)
-
+                                                    proj_layer=proj_layer,
+                                                    learn_attn_scale=cfg.learn_attn_scale)
               # normz_nsamples=cfg.spa_attn_normz_nsamples,
               # scatter_normz=cfg.spa_scatter_normz,
               # dist_type=cfg.dist_type)

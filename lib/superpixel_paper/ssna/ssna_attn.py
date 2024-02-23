@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn.functional import pad
 from torch.nn.init import trunc_normal_
+from einops import rearrange
 
 
 import torch
@@ -28,8 +29,9 @@ class SoftNeighSuperpixelAttn(nn.Module):
             dilation=1,
             qk_bias=True,
             use_weights=True,
-            qk_layer=None
-    ):
+            qk_layer=None,
+            qk_scale=None,
+            learn_attn_scale=False):
         super().__init__()
         self.num_heads = num_heads
         self.use_weights = use_weights
@@ -63,6 +65,15 @@ class SoftNeighSuperpixelAttn(nn.Module):
         # else:
         #     self.register_parameter("rpb", None)
 
+
+        # -- scaling q --
+        _bool = (learn_attn_scale is None) or (learn_attn_scale is False)
+        self.learn_attn_scale = not(_bool)
+        if (learn_attn_scale is None) or (learn_attn_scale is False):
+            self.attn_scale_net = nn.Identity()
+        else:
+            self.attn_scale_net = learn_attn_scale
+
         # -- viz --
         self.q_shell = nn.Identity()
         self.k_shell = nn.Identity()
@@ -85,6 +96,14 @@ class SoftNeighSuperpixelAttn(nn.Module):
               .reshape(B, H, W, qk_num, self.num_heads, self.head_dim)
               .permute(3, 0, 4, 1, 2, 5))
         q, k = qk[0], qk[-1]
+
+        # -- rescale --
+        if self.learn_attn_scale:
+            scale = self.attn_scale_net(rearrange(x,'b h w c -> b c h w'))
+            scale = rearrange(scale,'b 1 h w -> b 1 h w 1')
+            q = scale * q
+        else:
+            q = self.qk_scale * q
 
         q = self.q_shell(q)
         k = self.k_shell(k)

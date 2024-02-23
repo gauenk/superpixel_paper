@@ -10,7 +10,9 @@ import numpy as np
 from einops import rearrange
 from easydict import EasyDict as edict
 
-from natten import NeighborhoodAttention2D
+# from natten import NeighborhoodAttention2D
+from superpixel_paper.nat.nat_spin import NeighborhoodAttention2D
+# from ..nat import NeighborhoodAttention2D
 from positional_encodings.torch_encodings import PositionalEncoding2D
 from positional_encodings.torch_encodings import PositionalEncodingPermute2D
 
@@ -25,6 +27,7 @@ from .bass import SimulateBass
 from .guts import LocalTokenAttention,FFN,LayerNorm2d
 from .dncnn import DnCNN
 from .res import ResBlockList
+from .lambda_model import UNet as AttentionScaleNet
 
 
 def create_model(args):
@@ -46,7 +49,7 @@ def create_model(args):
              "use_attn_weights":False,"ssn_nftrs":3,"conv_ksize":3,
              "share_gen_sp":True,"heads":1,
              "use_state":False,"use_pwd":False,"use_dncnn":False,
-             "unet_sm":True,"use_proj":True}
+             "unet_sm":True,"use_proj":True,"learn_attn_scale":False}
     extract(args,pairs)
     # print({k:args[k] for k in pairs})
     return SimpleModel(colors=args.colors, dim=args.dim, block_num=args.block_num,
@@ -79,7 +82,8 @@ def create_model(args):
                        share_gen_sp=args.share_gen_sp,
                        use_state=args.use_state,use_pwd=args.use_pwd,
                        use_dncnn=args.use_dncnn,unet_sm=args.unet_sm,
-                       use_proj=args.use_proj,use_sna=args.use_sna)
+                       use_proj=args.use_proj,use_sna=args.use_sna,
+                       learn_attn_scale=args.learn_attn_scale)
 
 class SimpleModel(nn.Module):
     def __init__(self, colors=3, dim=40, block_num=8, heads=1, qk_dim=24, mlp_dim=72,
@@ -100,7 +104,7 @@ class SimpleModel(nn.Module):
                  conv_ksize=3,use_weights=False,ssn_nftrs=3,
                  share_gen_sp=True,use_state=False,
                  use_pwd=False,use_dncnn=True,unet_sm=True,
-                 use_proj=True,use_sna=False):
+                 use_proj=True,use_sna=False,learn_attn_scale=False):
         super(SimpleModel, self).__init__()
 
         # -- simplify stoken_size specification --
@@ -180,7 +184,7 @@ class SimpleModel(nn.Module):
                                      use_skip=use_skip,gen_sp_type=gen_sp_type,
                                      use_weights=use_weights,ssn_nftrs=ssn_nftrs,
                                      share_gen_sp=self.gen_sp,unet_sm=unet_sm,
-                                     use_proj=use_proj))
+                                     use_proj=use_proj,learn_attn_scale=learn_attn_scale))
             if self.use_midconvs:
                 conv_pad = conv_ksize//2
                 self.mid_convs.append(nn.Conv2d(dim, dim, conv_ksize, 1, conv_pad))
@@ -308,7 +312,7 @@ class Block(nn.Module):
                  nsa_mask_labels=False,gen_sp_use_grad=False,
                  gensp_niters=3,use_skip=True,gen_sp_type="default",
                  use_weights=True,ssn_nftrs=3,share_gen_sp=None,
-                 unet_sm=True,use_proj=True):
+                 unet_sm=True,use_proj=True,learn_attn_scale=False):
         super(Block,self).__init__()
         self.layer_num = layer_num
         self.stoken_size = stoken_size
@@ -325,6 +329,18 @@ class Block(nn.Module):
         assert use_nsp == use_sna,"Legacy name."
         # self.bn = nn.BatchNorm2d(dim)
         # self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+
+        # -- init network for qk scale --
+        # print(learn_attn_scale)
+        # exit()
+        _bool = (learn_attn_scale is None) or (learn_attn_scale is False)
+        self.learn_attn_scale = not(_bool)
+        # print(self.learn_attn_scale)
+        # exit()
+        if self.learn_attn_scale:
+            attn_scale_net = AttentionScaleNet(dim, 1, ssn_nftrs)
+        else:
+            attn_scale_net = None
 
         # -- spa --
         if share_gen_sp is None:
@@ -349,7 +365,8 @@ class Block(nn.Module):
                                  spa_scatter_normz=spa_scatter_normz,
                                  spa_full_sampling=spa_full_sampling,
                                  spa_sim_method=spa_sim_method,
-                                 dist_type=dist_type)
+                                 dist_type=dist_type,
+                                 learn_attn_scale=attn_scale_net)
             spa_pos_enc = nn.Identity()
             # spa_pos_enc = PositionalEncodingPermute2D(dim)
         else:
@@ -375,7 +392,7 @@ class Block(nn.Module):
                                  spa_sim_method=spa_sim_method,
                                  dist_type=dist_type,kernel_size=nat_ksize,
                                  mask_labels=nsa_mask_labels,use_weights=use_weights,
-                                 use_proj=use_proj)
+                                 use_proj=use_proj,learn_attn_scale=attn_scale_net)
             sna_pos_enc = nn.Identity()
             # sna_pos_enc = PositionalEncodingPermute2D(dim)
         else:
@@ -398,7 +415,7 @@ class Block(nn.Module):
                                    spa_sim_method=spa_sim_method,
                                    dist_type=dist_type,kernel_size=nat_ksize,
                                    mask_labels=nsa_mask_labels,use_weights=use_weights,
-                                   use_proj=use_proj)
+                                   use_proj=use_proj,learn_attn_scale=attn_scale_net)
             ssna_pos_enc = nn.Identity()
             # ssna_pos_enc = PositionalEncodingPermute2D(dim)
         else:
@@ -413,7 +430,8 @@ class Block(nn.Module):
             nat_layer = NeighborhoodAttention2D(dim=dim, kernel_size=nat_ksize,
                                                 dilation=1, num_heads=heads,
                                                 bias=False,qkv_bias=False,
-                                                qk_scale=spa_scale)
+                                                qk_scale=spa_scale,
+                                                learn_attn_scale=attn_scale_net)
             # nat_pos_enc = PositionalEncodingPermute2D(dim)
             nat_pos_enc = nn.Identity()
         else:

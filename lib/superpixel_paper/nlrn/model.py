@@ -14,7 +14,7 @@ import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
 
-from superpixel_paper.nat import NeighborhoodAttention2D
+from superpixel_paper.nat.nat_nlrn import NeighborhoodAttention2D
 from ..ssna.menu import load_ssna
 from ..models.nsp_menu import load_nsp
 from ..models.ssn_model import UNet

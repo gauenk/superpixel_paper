@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn.functional import pad
 from torch.nn.init import trunc_normal_
+from einops import rearrange
 
 
 import torch
@@ -27,10 +28,13 @@ class NeighSuperpixelAttn(nn.Module):
                  dilation=1,
                  qk_bias=True,
                  use_weights=True,
-                 qk_layer=None):
+                 qk_layer=None,
+                 qk_scale=None,
+                 learn_attn_scale=False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
+        self.qk_scale = qk_scale or self.head_dim**-0.5
         assert (
             kernel_size > 1 and kernel_size % 2 == 1
         ), f"Kernel size must be an odd number greater than 1, got {kernel_size}."
@@ -58,6 +62,15 @@ class NeighSuperpixelAttn(nn.Module):
         # else:
         #     self.register_parameter("rpb", None)
 
+
+        # -- scaling q --
+        _bool = (learn_attn_scale is None) or (learn_attn_scale is False)
+        self.learn_attn_scale = not(_bool)
+        if (learn_attn_scale is None) or (learn_attn_scale is False):
+            self.attn_scale_net = nn.Identity()
+        else:
+            self.attn_scale_net = learn_attn_scale
+
         # -- viz --
         self.q_shell = nn.Identity()
         self.k_shell = nn.Identity()
@@ -80,6 +93,17 @@ class NeighSuperpixelAttn(nn.Module):
               .reshape(B, H, W, qk_num, self.num_heads, self.head_dim)
               .permute(3, 0, 4, 1, 2, 5))
         q, k = qk[0], qk[-1]
+
+        # -- rescale --
+        if self.learn_attn_scale:
+            scale = self.attn_scale_net(rearrange(x,'b h w c -> b c h w'))
+            # print(scale.shape)
+            scale = rearrange(scale,'b 1 h w -> b 1 h w 1')
+            # print("[1]: ",scale.shape,q.shape)
+            # print(scale)
+            q = scale * q
+        else:
+            q = self.qk_scale * q
 
         q = self.q_shell(q)
         k = self.k_shell(k)
@@ -111,7 +135,7 @@ class NeighSuperpixelAttnFunction(Function):
         # attn = th.zeros((B,HD,H,W,kernel_size**2)).to(queries.device)
         attn = -th.inf * th.ones((B,HD,H,W,kernel_size**2),
                                  dtype=queries.dtype).to(queries.device)
-        superpixel_cuda.nsa_attn_forward(attn, queries, keys, imgSp)
+        superpixel_cuda.sna_attn_forward(attn, queries, keys, imgSp)
         ctx.save_for_backward(queries, keys, imgSp, attn)
         ctx.dilation = dilation
         # print("here: ",attn.min().item(),attn.max().item())
@@ -134,7 +158,7 @@ class NeighSuperpixelAttnFunction(Function):
         d_queries = th.zeros_like(ctx.saved_variables[0])
         d_keys = th.zeros_like(ctx.saved_variables[1])
         d_imgSp = th.zeros_like(ctx.saved_variables[2]).type(d_queries.dtype)
-        superpixel_cuda.nsa_attn_backward(
+        superpixel_cuda.sna_attn_backward(
             d_queries,d_keys,d_imgSp,d_attn,
             ctx.saved_variables[0],
             ctx.saved_variables[1],

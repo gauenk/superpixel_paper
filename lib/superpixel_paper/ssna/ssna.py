@@ -12,7 +12,7 @@ from einops import rearrange,repeat
 from natten.functional import natten2dav, natten2dqkrpb
 
 # -- ssna --
-from ..nsp.nsa_attn import NeighSuperpixelAttn
+from ..sna.sna_attn import NeighSuperpixelAttn
 from .ssna_attn import SoftNeighSuperpixelAttn
 from .ssna_agg import SoftNeighSuperpixelAgg
 from .attn_reweight import AttnReweight
@@ -26,7 +26,8 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
                  dilation=1,bias=False,qkv_bias=False,qk_scale=None,
                  attn_drop=0.0,proj_drop=0.0,mask_labels=False,
                  use_proj=True,use_weights=True,
-                 qk_layer=None,v_layer=None,proj_layer=None):
+                 qk_layer=None,v_layer=None,proj_layer=None,
+                 learn_attn_scale=False):
         super().__init__()
 
         # -- superpixels --
@@ -36,7 +37,7 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
         # -- scaling --
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
-        self.qk_scale = qk_scale or self.head_dim**-0.5
+        # self.qk_scale = qk_scale or self.head_dim**-0.5
         self.use_weights = use_weights
 
         # -- neighborhood attn --
@@ -50,7 +51,8 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
                                             kernel_size=kernel_size,
                                             num_heads=num_heads,
                                             qk_bias=bias,use_weights=use_weights,
-                                            qk_layer=qk_layer)
+                                            qk_layer=qk_layer,qk_scale=qk_scale,
+                                            learn_attn_scale=learn_attn_scale)
         self.reweight_version = "exp"
         # if self.reweight_version == "v0":
         #     self.attn_rw = AttnReweight()
@@ -62,7 +64,6 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
                                               v_bias=bias,use_proj=use_proj,
                                               use_weights=use_weights,
                                               v_layer=v_layer,proj_layer=proj_layer)
-
     def forward(self, x, sims, state=None):
 
         # -- unpack superpixel info --
@@ -108,11 +109,13 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
         # # print(attn.shape,x.shape,sims.shape)
 
         # print("attn.shape: ",attn.shape)
+
+        # -- reweight with probs --
         if self.mask_labels:
-            attn = (self.qk_scale * attn).softmax(-1)
+            attn = attn.softmax(-1)
             attn = attn[:,:,None].repeat(1,1,9,1,1,1)
         else:
-            attn = self.attn_rw(self.qk_scale*attn,sims,sinds)
+            attn = self.attn_rw(attn,sims,sinds)
         # attn = (self.qk_scale * attn).softmax(-1)
         # print("[2] attn.shape: ",attn.shape)
 

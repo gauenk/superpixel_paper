@@ -128,7 +128,7 @@ class SoftNeighSuperpixelAggFunction(Function):
         # superpixel_cuda.ssna_agg_forward(out, attn, values, sims, sinds)
         ctx.save_for_backward(attn, values, out, sims, sinds)
         ctx.dilation = dilation
-        # superpixel_cuda.nsa_agg_forward(out, attn, values)
+        # superpixel_cuda.sna_agg_forward(out, attn, values)
         # ctx.save_for_backward(attn, values, out)
         # ctx.dilation = dilation
 
@@ -141,7 +141,7 @@ class SoftNeighSuperpixelAggFunction(Function):
         # d_imgV = th.zeros_like(ctx.saved_variables[1])
         # # d_sims = th.zeros_like(ctx.saved_variables[3])
 
-        # superpixel_cuda.nsa_agg_backward(
+        # superpixel_cuda.sna_agg_backward(
         #     d_attn,d_imgV,grad_imgOut,
         #     ctx.saved_variables[0],
         #     ctx.saved_variables[1],

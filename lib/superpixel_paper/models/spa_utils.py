@@ -11,7 +11,7 @@ from easydict import EasyDict as edict
 
 # -- superpixel --
 from superpixel_paper.est_attn_normz import EffNormzFunction
-from spin.models.pair_wise_distance import PairwiseDistFunction
+from ..sr_models.pair_wise_distance import PairwiseDistFunction
 from natten import NeighborhoodAttention2D
 
 def normalize_attention(version,attn,sims,mask,nsamples):

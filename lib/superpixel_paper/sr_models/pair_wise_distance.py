@@ -1,7 +1,8 @@
 import torch
 from torch.utils.cpp_extension import load_inline
-from .pair_wise_distance_cuda_source import source
-import pair_wise_distance_cuda
+# from .pair_wise_distance_cuda_source import source
+# import pair_wise_distance_cuda
+import superpixel_cuda
 
 # print("compile cuda source of 'pair_wise_distance' function...")
 # print("NOTE: if you avoid this process, you make .cu file and compile it following https://pytorch.org/tutorials/advanced/cpp_extension.html")
@@ -20,7 +21,8 @@ class PairwiseDistFunction(torch.autograd.Function):
         output = pixel_features.new(pixel_features.shape[0],
                                     9, pixel_features.shape[-1]).zero_()
         self.save_for_backward(pixel_features, spixel_features, init_spixel_indices)
-        return pair_wise_distance_cuda.forward(
+        # return pair_wise_distance_cuda.forward(
+        return superpixel_cuda.pwd_forward(
             pixel_features.contiguous(), spixel_features.contiguous(),
             init_spixel_indices.contiguous(), output,
             self.num_spixels_width, self.num_spixels_height)
@@ -32,7 +34,8 @@ class PairwiseDistFunction(torch.autograd.Function):
         pixel_features_grad = torch.zeros_like(pixel_features)
         spixel_features_grad = torch.zeros_like(spixel_features)
 
-        pixel_features_grad, spixel_features_grad = pair_wise_distance_cuda.backward(
+        # pair_wise_distance_cuda
+        pixel_features_grad, spixel_features_grad = superpixel_cuda.pwd_backward(
             dist_matrix_grad.contiguous(), pixel_features.contiguous(),
             spixel_features.contiguous(), init_spixel_indices.contiguous(),
             pixel_features_grad, spixel_features_grad,

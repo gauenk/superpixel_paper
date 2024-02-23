@@ -59,7 +59,7 @@ __global__ void forward_kernel(
     }
 }
 
-torch::Tensor forward_cuda(
+torch::Tensor pwd_forward_cuda(
     const torch::Tensor pixel_features,
     const torch::Tensor spixel_features,
     const torch::Tensor spixel_indices,
@@ -135,7 +135,7 @@ __global__ void backward_kernel(
 }
 
 
-std::vector<torch::Tensor> backward_cuda(
+std::vector<torch::Tensor> pwd_backward_cuda(
     const torch::Tensor dist_matrix_grad,
     const torch::Tensor pixel_features,
     const torch::Tensor spixel_features,
@@ -168,8 +168,8 @@ std::vector<torch::Tensor> backward_cuda(
     return {pixel_features_grad, spixel_features_grad};
 }
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("forward", &forward_cuda, "pair_wise_distance forward");
-  m.def("backward", &backward_cuda, "pair_wise_distance backward");
+void init_pwd(py::module &m){
+  m.def("pwd_forward", &pwd_forward_cuda, "pair_wise_distance forward");
+  m.def("pwd_backward", &pwd_backward_cuda, "pair_wise_distance backward");
 }
 

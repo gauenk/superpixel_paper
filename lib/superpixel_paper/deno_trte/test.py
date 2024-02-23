@@ -15,6 +15,7 @@ import pandas as pd
 from pathlib import Path
 from easydict import EasyDict as edict
 from dev_basics.utils.misc import set_seed
+from dev_basics.utils.metrics import compute_psnrs,compute_ssims
 
 import copy
 dcopy = copy.deepcopy
@@ -66,7 +67,7 @@ def extract_defaults(_cfg):
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
         "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
-        "output_folder":"output/deno/test","save_output":False}
+        "output_folder":"output/deno/test","save_output":False,"eval_ycb":True}
     # defs = {
     #     "dim":12,"qk_dim":6,"mlp_dim":6,"stoken_size":[8],"block_num":1,
     #     "heads":1,"M":0.,"use_local":False,"use_inter":False,
@@ -197,6 +198,7 @@ def run(cfg):
             # lr = lr[...,:300,:300]
             # hr = hr[...,:300*cfg.upscale,:300*cfg.upscale]
             # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
+            # print("sigma: ",th.mean((lr/255. - hr/255.)**2).sqrt()*255.)
             with th.no_grad():
                 sr = forward(lr)
                 # sr = model(lr)
@@ -220,17 +222,20 @@ def run(cfg):
                 cv2.imwrite(output_name, out_img[:, :, [2, 1, 0]]) #
 
             # conver to ycbcr
-            if cfg.colors == 3:
-                hr_ycbcr = utils.rgb_to_ycbcr(hr)
-                sr_ycbcr = utils.rgb_to_ycbcr(sr)
-                hr = hr_ycbcr[:, 0:1, :, :]
-                sr = sr_ycbcr[:, 0:1, :, :]
 
             hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
             sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
 
-            psnr = utils.calc_psnr(sr, hr)
-            ssim = utils.calc_ssim(sr, hr)
+            if (cfg.colors == 3) and cfg.eval_ycb:
+                hr_ycbcr = utils.rgb_to_ycbcr(hr)
+                sr_ycbcr = utils.rgb_to_ycbcr(sr)
+                hr = hr_ycbcr[:, 0:1, :, :]
+                sr = sr_ycbcr[:, 0:1, :, :]
+                psnr = utils.calc_psnr(sr, hr)
+                ssim = utils.calc_ssim(sr, hr)
+            else:
+                psnr = compute_psnrs(hr[:,None],sr[:,None],div=255.)[0].item()
+                ssim = compute_ssims(hr[:,None],sr[:,None],div=255.)[0].item()
             avg_psnr += psnr
             avg_ssim += ssim
 

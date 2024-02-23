@@ -2,6 +2,7 @@ import os
 import glob
 import random
 import pickle
+from pathlib import Path
 
 import numpy as np
 import imageio
@@ -31,13 +32,13 @@ def crop_patch(lr, hr, patch_size, upscale, augment=True):
     lr_patch, hr_patch = ndarray2tensor(lr_patch), ndarray2tensor(hr_patch)
     return lr_patch, hr_patch
 
-class DIV2K(data.Dataset):
+class BSD500(data.Dataset):
     def __init__(
         self, HR_folder, LR_folder, CACHE_folder,
         train=True, augment=True, upscale=2, colors=1,
             patch_size=96, repeat=168, img_postfix=".png"
     ):
-        super(DIV2K, self).__init__()
+        super(BSD500, self).__init__()
         self.HR_folder = HR_folder
         self.LR_folder = LR_folder
         self.augment   = augment
@@ -61,29 +62,32 @@ class DIV2K(data.Dataset):
         self.lr_images = []
 
         ## generate dataset
-        if self.train:
-            self.start_idx = 1
-            self.end_idx = 801
-        else:
-            self.start_idx = 801
-            self.end_idx = 901
+        self.start_idx = 0
+        self.end_idx = 432
+
+        names = [p.stem for p in Path(HR_folder).iterdir()]
+        # print(names)
+        # print(len(names))
+        # exit()
 
         for i in range(self.start_idx, self.end_idx):
             idx = str(i).zfill(4)
-            hr_filename = os.path.join(self.HR_folder, idx + self.img_postfix)
-            lr_filename = os.path.join(self.LR_folder, 'X{}'.format(self.upscale), idx + 'x{}'.format(self.upscale) + self.img_postfix)
+            name = names[i]
+            hr_filename = os.path.join(self.HR_folder, name + self.img_postfix)
+            #lr_filename = os.path.join(self.LR_folder, 'X{}'.format(self.upscale), idx + 'x{}'.format(self.upscale) + self.img_postfix)
+            lr_filename = os.path.join(self.LR_folder, 'X{}'.format(self.upscale), name + self.img_postfix)
             self.hr_filenames.append(hr_filename)
             self.lr_filenames.append(lr_filename)
         self.nums_trainset = len(self.hr_filenames)
 
         LEN = self.end_idx - self.start_idx
-        hr_dir = os.path.join(self.cache_dir, 'div2k_hr', 'ycbcr' if self.colors==1 else 'rgb')
-        lr_dir = os.path.join(self.cache_dir, 'div2k_lr_x{}'.format(self.upscale), 'ycbcr' if self.colors==1 else 'rgb')
+        hr_dir = os.path.join(self.cache_dir, 'bsd500_hr', 'ycbcr' if self.colors==1 else 'rgb')
+        lr_dir = os.path.join(self.cache_dir, 'bsd500_lr_x{}'.format(self.upscale), 'ycbcr' if self.colors==1 else 'rgb')
         if not os.path.exists(hr_dir):
             os.makedirs(hr_dir)
         else:
             for i in range(LEN):
-                hr_npy_name = self.hr_filenames[i].split('/')[-1].replace('.png', '.npy')
+                hr_npy_name = self.hr_filenames[i].split('/')[-1].replace('.jpg', '.npy')
                 hr_npy_name = os.path.join(hr_dir, hr_npy_name)
                 self.hr_npy_names.append(hr_npy_name)
 
@@ -91,7 +95,7 @@ class DIV2K(data.Dataset):
             os.makedirs(lr_dir)
         else:
             for i in range(LEN):
-                lr_npy_name = self.lr_filenames[i].split('/')[-1].replace('.png', '.npy')
+                lr_npy_name = self.lr_filenames[i].split('/')[-1].replace('.jpg', '.npy')
                 lr_npy_name = os.path.join(lr_dir, lr_npy_name)
                 self.lr_npy_names.append(lr_npy_name)
 
@@ -104,7 +108,7 @@ class DIV2K(data.Dataset):
                 hr_image = imageio.imread(self.hr_filenames[i], pilmode="RGB")
                 if self.colors == 1:
                     hr_image = sc.rgb2ycbcr(hr_image)[:, :, 0:1]
-                hr_npy_name = self.hr_filenames[i].split('/')[-1].replace('.png', '.npy')
+                hr_npy_name = self.hr_filenames[i].split('/')[-1].replace('.jpg', '.npy')
                 hr_npy_name = os.path.join(hr_dir, hr_npy_name)
                 self.hr_npy_names.append(hr_npy_name)
                 np.save(hr_npy_name, hr_image)
@@ -118,7 +122,7 @@ class DIV2K(data.Dataset):
                 lr_image = imageio.imread(self.lr_filenames[i], pilmode="RGB")
                 if self.colors == 1:
                     lr_image = sc.rgb2ycbcr(lr_image)[:, :, 0:1]
-                lr_npy_name = self.lr_filenames[i].split('/')[-1].replace('.png', '.npy')
+                lr_npy_name = self.lr_filenames[i].split('/')[-1].replace('.jpg', '.npy')
                 lr_npy_name = os.path.join(lr_dir, lr_npy_name)
                 self.lr_npy_names.append(lr_npy_name)
                 np.save(lr_npy_name, lr_image)

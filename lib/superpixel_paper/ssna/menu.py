@@ -20,23 +20,27 @@ class SSNA(nn.Module):
         self.sp_sims = sp_sims
         self.neigh_sp_attn = neigh_sp_attn
 
-    def forward(self,x,labels=None):
+    def forward(self,x,sims=None,state=None):
         # -- unpack superpixel info --
-        if labels is None:
-            sims, num_spixels = self.sp_sims(x)
-            sims = rearrange(sims,'b s (h w) -> b h w',h=H)
-        return self.neigh_sp_attn(x,labels)
+        if sims is None:
+            sims, num_spixels, state = self.sp_sims(x,state=state)
+        return self.neigh_sp_attn(x,sims),state
 
 # -- loading --
 def load_ssna(nsp_version,dim,heads,qk_dim,gen_sp,**kwargs):
     cfg = edict(kwargs)
+    qk_layer = kwargs['qk_layer'] if 'qk_layer' in kwargs else None
+    v_layer = kwargs['v_layer'] if 'v_layer' in kwargs else None
+    proj_layer = kwargs['proj_layer'] if 'proj_layer' in kwargs else None
+
     ssna_cls = SoftSuperpixelNeighborhoodAttention
-    neigh_sp_attn = ssn_cls(dim, heads,cfg.kernel_size,
-                            qk_scale=cfg.spa_scale,
-                            vweight=cfg.spa_vweight,
-                            oweight=cfg.spa_oweight,
-                            attn_normz=cfg.spa_attn_normz,
-                            mask_labels=cfg.mask_labels)
+    neigh_sp_attn = ssna_cls(dim, heads,cfg.kernel_size,
+                             qk_scale=cfg.spa_scale,
+                             mask_labels=cfg.mask_labels,
+                             use_weights=cfg.use_weights,
+                             use_proj=cfg.use_proj,
+                             qk_layer=qk_layer,v_layer=v_layer,
+                             proj_layer=proj_layer)
     ssna = SSNA(gen_sp,neigh_sp_attn)
     # if cfg.spa_full_sampling:
     #     # if cfg.nsp_sim_method == "slic":

@@ -18,6 +18,7 @@ def config_via_spa(cfg):
                  "spa_oweight":False,
                  "spa_scatter_normz":None,
                  "spa_sim_method":"slic",
+                 "use_sna":True,
                  "use_nsp":True,
                  "use_spa":False}
         for key,val in pairs.items():
@@ -34,6 +35,7 @@ def config_via_spa(cfg):
                  "spa_full_sampling":True,
                  "spa_attn_nsamples":3,
                  "spa_scatter_normz":"ones",
+                 "use_sna":True,
                  "use_nsp":True,
                  "use_spa":False}
         for key,val in pairs.items():
@@ -113,7 +115,7 @@ def config_via_spa(cfg):
             cfg[key] = val
     elif spa == "ssna":
         pairs = {"use_ssna":True,
-                 "use_intra":False,
+                 # "use_intra":False,
                  "use_spa":False,
                  "use_nat":False,
                  "use_conv":False,
@@ -165,13 +167,24 @@ def config_via_spa(cfg):
         cfg.use_intra = False
         cfg.use_spa = False
         cfg.use_nat = False
+    elif spa == "sna":
+        cfg.use_intra = False
+        cfg.use_spa = False
+        cfg.use_nsp = True
+        cfg.use_sna = True
     elif spa == "nsp":
         cfg.use_intra = False
         cfg.use_spa = False
         cfg.use_nsp = True
+        cfg.use_sna = True
     elif spa == "conv":
         cfg.use_intra = False
         cfg.use_spa = False
         cfg.use_conv = True
+    elif spa == "dncnn":
+        cfg.use_intra = False
+        cfg.use_spa = False
+        cfg.use_conv = False
+        cfg.use_dncnn = True
     else:
         raise ValueError(f"Uknown SPA version [{spa}]")

@@ -26,16 +26,17 @@ class SoftNeighSuperpixelAgg(nn.Module):
 
 
     def __init__(
-        self,
-        dim,
-        num_heads,
-        kernel_size,
-        dilation=1,
-        v_bias=True,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        use_proj=True,
-    ):
+            self,
+            dim,
+            num_heads,
+            kernel_size,
+            dilation=1,
+            v_bias=True,
+            attn_drop=0.0,
+            proj_drop=0.0,
+            use_proj=True,
+            use_weights=True,
+            v_layer=None,proj_layer=None):
         super().__init__()
 
         # -- for padding --
@@ -48,17 +49,29 @@ class SoftNeighSuperpixelAgg(nn.Module):
         ), f"Dilation must be greater than or equal to 1, got {dilation}."
         self.dilation = dilation or 1
         self.window_size = self.kernel_size * self.dilation
+        self.use_weights = use_weights
 
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
-        # self.v = nn.Linear(dim, dim * 1, bias=v_bias)
-        self.v = nn.Identity()
+
+        self.use_weights = use_weights
+        if self.use_weights:
+            if v_layer is None:
+                self.v = nn.Linear(dim, dim * 1, bias=v_bias)
+            else:
+                self.v = v_layer
+        else:
+            self.v = nn.Identity()
+
         self.attn_drop = nn.Dropout(attn_drop)
 
         use_proj = True
         self.use_proj = use_proj
         if self.use_proj:
-            self.proj = nn.Linear(dim, dim)
+            if proj_layer is None:
+                self.proj = nn.Linear(dim, dim)
+            else:
+                self.proj = proj_layer
             self.proj_drop = nn.Dropout(proj_drop)
         else:
             self.proj = nn.Identity()
@@ -84,6 +97,7 @@ class SoftNeighSuperpixelAgg(nn.Module):
         v = self.v_shell(v)
 
         x = SoftNeighSuperpixelAggFunction.apply(v,attn,sims,sinds)
+        # x = SoftNeighSuperpixelAggFunction.apply(v,attn)
         x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
         if pad_r or pad_b:
             x = x[:, :Hp, :Wp, :]
@@ -100,6 +114,8 @@ class SoftNeighSuperpixelAggFunction(Function):
 
     @staticmethod
     def forward(ctx, values, attn, sims, sinds):
+    # @staticmethod
+    # def forward(ctx, values, attn):
 
         # -- aggregate --
         dilation = 1
@@ -107,19 +123,36 @@ class SoftNeighSuperpixelAggFunction(Function):
         attn = attn.contiguous()
         values = values.contiguous()
         out = th.zeros_like(values)
+        # print(out.shape,attn.shape,values.shape,sims.shape)
         superpixel_cuda.ssna_agg_forward(out, attn, values, sims, sinds)
+        # superpixel_cuda.ssna_agg_forward(out, attn, values, sims, sinds)
         ctx.save_for_backward(attn, values, out, sims, sinds)
         ctx.dilation = dilation
+        # superpixel_cuda.nsa_agg_forward(out, attn, values)
+        # ctx.save_for_backward(attn, values, out)
+        # ctx.dilation = dilation
 
         return out
 
     @staticmethod
     def backward(ctx, grad_imgOut):
 
+        # d_attn = th.zeros_like(ctx.saved_variables[0])
+        # d_imgV = th.zeros_like(ctx.saved_variables[1])
+        # # d_sims = th.zeros_like(ctx.saved_variables[3])
+
+        # superpixel_cuda.nsa_agg_backward(
+        #     d_attn,d_imgV,grad_imgOut,
+        #     ctx.saved_variables[0],
+        #     ctx.saved_variables[1],
+        #     ctx.saved_variables[2],
+        # )
+        # return d_imgV, d_attn
+
+        grad_imgOut = grad_imgOut.contiguous()
         d_attn = th.zeros_like(ctx.saved_variables[0])
         d_imgV = th.zeros_like(ctx.saved_variables[1])
         d_sims = th.zeros_like(ctx.saved_variables[3])
-
         superpixel_cuda.ssna_agg_backward(
             d_attn,d_imgV,d_sims,grad_imgOut,
             ctx.saved_variables[0],

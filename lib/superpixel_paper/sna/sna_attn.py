@@ -20,14 +20,14 @@ class NeighSuperpixelAttn(nn.Module):
     Neighborhood Attention 2D Module
     """
 
-    def __init__(
-        self,
-        dim,
-        num_heads,
-        kernel_size,
-        dilation=1,
-        qk_bias=True,
-    ):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 kernel_size,
+                 dilation=1,
+                 qk_bias=True,
+                 use_weights=True,
+                 qk_layer=None):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
@@ -41,9 +41,15 @@ class NeighSuperpixelAttn(nn.Module):
         self.dilation = dilation or 1
         self.window_size = self.kernel_size * self.dilation
 
-        self.qk = nn.Identity()
-        # self.qk = nn.Linear(dim, dim, bias=qk_bias)
-        # self.qk = nn.Linear(dim, dim * 2, bias=qk_bias)
+        self.use_weights = use_weights
+        if self.use_weights:
+            if qk_layer is None:
+                self.qk = nn.Linear(dim, dim * 2, bias=qk_bias)
+            else:
+                self.qk = qk_layer
+            # self.qk = nn.Linear(dim, dim, bias=qk_bias)
+        else:
+            self.qk = nn.Identity()
         # if bias:
         #     self.rpb = nn.Parameter(
         #         torch.zeros(num_heads, (2 * kernel_size - 1), (2 * kernel_size - 1))
@@ -68,18 +74,12 @@ class NeighSuperpixelAttn(nn.Module):
             pad_b = max(0, self.window_size - H)
             x = pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
             _, H, W, _ = x.shape
-        # qk = (
-        #     self.qk(x)
-        #     .reshape(B, H, W, 2, self.num_heads, self.head_dim)
-        #     .permute(3, 0, 4, 1, 2, 5)
-        # )
-        # q, k = qk[0], qk[1]
-        qk = (
-            self.qk(x)
-            .reshape(B, H, W, 1, self.num_heads, self.head_dim)
-            .permute(3, 0, 4, 1, 2, 5)
-        )
-        q, k = qk[0], qk[0]
+
+        qk_num = 2 if self.use_weights else 1
+        qk = (self.qk(x)
+              .reshape(B, H, W, qk_num, self.num_heads, self.head_dim)
+              .permute(3, 0, 4, 1, 2, 5))
+        q, k = qk[0], qk[-1]
 
         q = self.q_shell(q)
         k = self.k_shell(k)

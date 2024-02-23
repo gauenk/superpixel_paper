@@ -1,24 +1,57 @@
 import os
-from spin.datas.benchmark import Benchmark
-from spin.datas.div2k import DIV2K
+# from spin.datas.benchmark import Benchmark
+# from spin.datas.div2k import DIV2K
+from .benchmark import Benchmark
+from .div2k import DIV2K
+from .bsd500 import BSD500
 from torch.utils.data import DataLoader
 
 
 def create_datasets(args):
-    div2k = DIV2K(
-        os.path.join(args.data_path, 'DIV2K/DIV2K_train_HR'), 
-        os.path.join(args.data_path, 'DIV2K/DIV2K_train_LR_bicubic'), 
-        os.path.join(args.data_path, 'div2k_cache'),
-        train=True, 
-        augment=args.data_augment, 
-        upscale=args.upscale, 
-        colors=args.colors, 
-        patch_size=args.patch_size, 
-        repeat=args.data_repeat, 
-    )
-    train_dataloader = DataLoader(dataset=div2k, num_workers=args.threads, batch_size=args.batch_size, shuffle=True, pin_memory=True, drop_last=True)
+
+    if not("dname_tr" in args) or (args.dname_tr == "div2k"):
+        div2k = DIV2K(
+            os.path.join(args.data_path, 'DIV2K/DIV2K_train_HR'), 
+            os.path.join(args.data_path, 'DIV2K/DIV2K_train_LR_bicubic'), 
+            os.path.join(args.data_path, 'div2k_cache'),
+            train=True, 
+            augment=args.data_augment, 
+            upscale=args.upscale, 
+            colors=args.colors, 
+            patch_size=args.patch_size, 
+            repeat=args.data_repeat, 
+        )
+        train_dataloader = DataLoader(dataset=div2k, num_workers=args.threads,
+                                      batch_size=args.batch_size, shuffle=True,
+                                      pin_memory=True, drop_last=True)
+    elif args.dname_tr == "bsd500":
+        bsd500 = BSD500(
+            os.path.join(args.data_path, 'BSD500/BSD500_train_HR'), 
+            os.path.join(args.data_path, 'BSD500/BSD500_train_LR_bicubic'), 
+            os.path.join(args.data_path, 'bsd500_cache'),
+            train=True, 
+            augment=args.data_augment, 
+            upscale=args.upscale, 
+            colors=args.colors, 
+            patch_size=args.patch_size, 
+            repeat=args.data_repeat,
+            img_postfix=".jpg"
+        )
+        train_dataloader = DataLoader(dataset=bsd500, num_workers=args.threads,
+                                      batch_size=args.batch_size, shuffle=True,
+                                      pin_memory=True, drop_last=True)
+    else:
+        raise ValueError("Unknown dataset: %s" % args.dname_tr)
 
     valid_dataloaders = []
+    if 'BSD68' in args.eval_sets:
+        bsd68_hr_path = os.path.join(args.data_path, 'benchmarks/BSD68/HR')
+        bsd68_lr_path = os.path.join(args.data_path, 'benchmarks/BSD68/LR_bicubic')
+        bsd68  = Benchmark(bsd68_hr_path, bsd68_lr_path, scale=args.upscale,
+                          colors=args.colors)
+        valid_dataloaders += [{'name': 'bsd68', 'dataloader':
+                               DataLoader(dataset=bsd68, batch_size=1, shuffle=False),
+                               "data":bsd68}]
     if 'Set5' in args.eval_sets:
         set5_hr_path = os.path.join(args.data_path, 'benchmarks/Set5/HR')
         set5_lr_path = os.path.join(args.data_path, 'benchmarks/Set5/LR_bicubic')

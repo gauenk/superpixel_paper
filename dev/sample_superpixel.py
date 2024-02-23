@@ -12,11 +12,15 @@ from dev_basics.utils.misc import set_seed
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 from torchvision import utils as tv_utils
+from torchvision.utils import save_image,make_grid
 
 # -- data --
 import data_hub
 
 # -- nicer viz --
+from PIL import Image
+import pylab
+from torchvision.utils import draw_bounding_boxes,draw_segmentation_masks
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 from superpixel_paper.models.bass import SimulateBass
@@ -133,6 +137,39 @@ def viz_weights(sims,ftrs):
     #                   "output/explain_rewieghting/centroid_%s" % (name))
     vid_io.save_image(weights[None,:,:],"output/viz_attn_weights/weights")
 
+def sp_to_mask(imgSp):
+    # -- get masks --
+    uniqs = imgSp.unique()
+    masks = []
+    for u in uniqs:
+        masks.append(imgSp==u)
+    masks = th.cat(masks)
+    return masks
+
+def draw_seg(img,imgSp):
+    ncols = 1500
+    # cm = pylab.get_cmap('gist_rainbow')
+    cm = pylab.get_cmap('flag')
+    def index2color(i):
+        nmax = 100
+        cm_i = ((1.*(i%nmax))/nmax) % 1
+        color = [int(255.*i.item()) for i in cm(cm_i)]
+        color = [color[0],color[1],color[2]]
+        return tuple(color)
+
+    # -- masks --
+    masks = sp_to_mask(imgSp[None,])
+    img_ui = th.clamp(255*img,0,255).type(th.uint8)[0].cpu()
+    color_map = [index2color(i%ncols) for i in range(ncols)]
+    print(img_ui.shape,masks.shape)
+    seg_result = draw_segmentation_masks(
+        img_ui*0, masks.cpu(), alpha=1.,
+        # colors="blue",
+        colors=color_map,
+    )
+    return seg_result.to(img.device)
+
+
 
 def main():
 
@@ -167,6 +204,7 @@ def main():
     # S = 12
     S = 10
     nH,nW = (H-1)//S+1,(W-1)//S+1
+    # M = 0.001
     # M = 0.2
     M = 10.
     # ws = 28
@@ -178,18 +216,24 @@ def main():
     # print("ftrs.shape: ",ftrs.shape)
 
     # -- exec --
-    sims,num = ssn_iter_stnls(ftrs,n_iter=niters,stoken_size=[S,S],M=M,ws=ws,
-                              affinity_softmax=affinity_softmax)
+    # sims,num = ssn_iter_stnls(ftrs,n_iter=niters,stoken_size=[S,S],M=M,ws=ws,
+    #                           affinity_softmax=affinity_softmax)
+    sims,num = ssn_iter_spin(ftrs,n_iter=niters,stoken_size=[S,S],M=M,
+                             affinity_softmax=affinity_softmax)
+
 
     # -- setup --
+    ftrs_og = ftrs.clone()
     ftrs = rearrange(ftrs,'1 f h w -> h w f')
     sims = sims.reshape(-1,H,W)
-    labels = th.argmax(sims,0).cpu().numpy()
+    labels = th.argmax(sims,0)
+    labels_og = labels.clone()
+    labels = labels.cpu().numpy()
 
     # -- pick pixel --
     i,j = H//2+7,W//2-25 # center pixel
-    VW = 64 # viz window size
-    # VW = 128 # viz window size
+    # VW = 64 # viz window size
+    VW = 128 # viz window size
     sH,eH = i-VW//2,i+VW//2
     sW,eW = j-VW//2,j+VW//2
     a,b = VW//2,VW//2
@@ -250,6 +294,14 @@ def main():
     vid_io.save_image(ftrs_w,"output/figures/sample_superpixel/ftrs")
 
 
+    # img_og = img
+    # sp_og = sp
+    # print(ftrs_og.max(),ftrs_og.min())
+    img_seg = draw_seg(ftrs_og,labels_og)[None,:]
+    print("img_seg.shape: ",img_seg.shape)
+    print(img_seg.min(),img_seg.max())
+    save_image(img_seg/255.,"viz_colors.png")
+    # Image.fromarray(img_seg).save("viz_colors.png")
 
 
 if __name__ == "__main__":

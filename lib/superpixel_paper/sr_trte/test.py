@@ -16,7 +16,7 @@ from pathlib import Path
 from easydict import EasyDict as edict
 from dev_basics.utils.misc import set_seed
 
-import torchvision.transforms.functional as F
+import torchvision.transforms.functional as tv_F
 import copy
 dcopy = copy.deepcopy
 from easydict import EasyDict as edict
@@ -56,7 +56,7 @@ def extract_defaults(_cfg):
     cfg = edict(dcopy(_cfg))
     defs = {
         "dim":12,"qk_dim":6,"mlp_dim":6,"stoken_size":[8],"block_num":1,
-        "heads":1,"M":0.,"use_local":False,"use_inter":False,
+        "heads":1,"M":0.,"use_local":False,"use_inter":False,"use_proj":True,
         "use_intra":True,"use_fnn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
@@ -85,8 +85,8 @@ def run(cfg):
     gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
     gpu_ids_str = "2"
     # gpu_ids_str = "0"
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
     test_epoch = int(cfg.pretrained_path.split("=")[-1].split(".")[0])
     out_base = "%s/epoch=%02d" %(cfg.tr_uuid,test_epoch)
     output_folder = Path(cfg.output_folder) / out_base
@@ -98,7 +98,7 @@ def run(cfg):
 
     # -- chunking for validation --
     chunk_cfg = edict()
-    chunk_cfg.spatial_chunk_size = 96
+    chunk_cfg.spatial_chunk_size = 300
     chunk_cfg.spatial_chunk_sr = cfg.upscale
     chunk_cfg.spatial_chunk_overlap = 0.25
 
@@ -153,11 +153,11 @@ def run(cfg):
     model = model.eval()
     info = {"dname":[],"name":[],"psnrs":[],"ssims":[]}
     for valid_dataloader in valid_dataloaders:
-        fwd_fxn = lambda vid: model(vid[:,0])[:,None]
         # def fwd_fxn(vid):
         #     sr = torch.nn.functional.interpolate(vid[0], scale_factor=2,
         #                                          mode='bilinear', align_corners=False)
         #     return sr[:,None]
+        fwd_fxn = lambda vid: model(vid[:,0])[:,None]
         fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
         def forward(_sample):
             with th.no_grad():
@@ -178,6 +178,20 @@ def run(cfg):
             if not(cfg.denoise) and cfg.with_sigma:
                 lr = lr + cfg.sigma*th.randn_like(lr)
             lr, hr = lr.to(device), hr.to(device)
+            lr_H,lr_W = lr.shape[-2:]
+
+            # -- find even number --
+            # print("[0]: ",lr_H,lr_W)
+            # lr_H = lr_H - (lr_H*cfg.upscale % 4)
+            # lr_W = lr_W - (lr_W*cfg.upscale % 4)
+            pad_h = lr_H*cfg.upscale % 4
+            pad_w = lr_W*cfg.upscale % 4
+            # print(pad_h,pad_w)
+            # lr = lr[:,:,:lr_H,:lr_W]
+            lr = F.pad(lr,(0,pad_w,0,pad_h))
+            lr_H,lr_W = lr.shape[-2:]
+            # print("[1]: ",lr_H,lr_W)
+            hr = hr[:,:,:lr_H*cfg.upscale,:lr_W*cfg.upscale]
             # print("lr.shape: ",lr.shape)
             torch.cuda.empty_cache()
             # lr = lr[...,:300,:300]
@@ -185,15 +199,24 @@ def run(cfg):
             # lr = lr[...,:300,:300]
             # hr = hr[...,:300*cfg.upscale,:300*cfg.upscale]
             # torchvision.transforms.functional.
-            # lr = F.center_crop(lr,(300,300))
-            # hr = F.center_crop(hr,(300*cfg.upscale,300*cfg.upscale)
+            # lr = tv_F.center_crop(lr,(300,300))
+            # hr = tv_F.center_crop(hr,(300*cfg.upscale,300*cfg.upscale))
+            # hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+            # lr = lr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+
+            # lH,lW = lr.shape[-2:]
+            # H,W = lH*cfg.upscale,lW*cfg.upscale
+            # lr = F.pad(lr,(0,1,0,1))
             # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
             with th.no_grad():
-                # sr = forward(lr)
-                sr = model(lr)
+                sr = forward(lr)
+                # sr = model(lr)
+            # sr = sr[...,:H,:W]
             # quantize output to [0, 255]
             hr = hr.clamp(0, 255)
             sr = sr.clamp(0, 255)
+            H,W = hr.shape[-2:]
+            sr = sr[...,:H,:W]
 
             out_img = sr.detach()[0].float().cpu().numpy()
             out_img = np.transpose(out_img, (1, 2, 0))
@@ -213,11 +236,12 @@ def run(cfg):
                 hr = hr_ycbcr[:, 0:1, :, :]
                 sr = sr_ycbcr[:, 0:1, :, :]
 
-            hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
-            sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+            # hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+            # sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
 
             psnr = utils.calc_psnr(sr, hr)
             ssim = utils.calc_ssim(sr, hr)
+            # print(psnr,ssim)
             avg_psnr += psnr
             avg_ssim += ssim
 

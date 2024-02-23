@@ -5,6 +5,12 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torch
+from torch import nn
+from torch.nn.functional import pad
+from torch.nn.init import trunc_normal_
+
+
 # -- basics --
 import math
 from einops import rearrange
@@ -14,105 +20,166 @@ from superpixel_paper.est_attn_normz import EffNormzFunction
 from spin.models.pair_wise_distance import PairwiseDistFunction
 from natten import NeighborhoodAttention2D
 # from .stnls_gen_sp import stnls_ssn_iter
+from .ssn_model import UNet
+from .lambda_model import UNet as LambdaModel
+from .utils import get_pwd,calc_init_centroid
+from .utils import get_hard_abs_labels,get_abs_indices
 
 
 class GenSP(nn.Module):
     def __init__(self, n_iter=2,M=0.,stoken_size=8,
                  affinity_softmax=1., softmax_order="v0", use_grad=False,
-                 gen_sp_type="default"):
+                 gen_sp_type="default", dim=-1, ssn_nftrs = 9,
+                 use_state=False,use_pwd=False,unet_sm=True,
+                 ssn_model=None,lambda_model=None):
         super().__init__()
         self.n_iter = n_iter
         self.M = M
         self.stoken_size = stoken_size
+        if isinstance(self.stoken_size,int):
+            self.stoken_size = [self.stoken_size,self.stoken_size]
         self.affinity_softmax = affinity_softmax
         self.softmax_order = softmax_order
         self.use_grad = use_grad
         self.gen_sp_type = gen_sp_type
-        self.reshape_output = gen_sp_type == "reshape"
+        self.use_state = use_state
+        self.use_pwd = use_pwd
+        self.reshape_output = gen_sp_type in ["reshape","modulated"]
 
-    def forward(self, x):
-        sims, num_spixels = ssn_iter(x, self.stoken_size,
-                                     self.n_iter, self.M,
-                                     self.affinity_softmax,
-                                     self.softmax_order,
-                                     self.use_grad,
-                                     self.return_sparse)
-        if self.reshape_output:
+        use_unet = self.gen_sp_type in ["unet","ssn"]
+        use_lmodel = self.gen_sp_type in ["modulated"]
+        # ssn_nftrs = 3
+
+        # -- input dimension --
+        in_dim = dim
+        if use_pwd: in_dim += 9
+        if use_state:
+            if use_unet: in_dim += 9
+            if use_lmodel: in_dim += 2
+
+        id_l0 = nn.Identity()
+        id_l1 = nn.Identity()
+        if ssn_model is None:
+            self.ssn = UNet(in_dim,9,ssn_nftrs,unet_sm) if use_unet else id_l0
+        else:
+            self.ssn = ssn_model
+        if lambda_model is None:
+            self.lambda_model = LambdaModel(in_dim,2,ssn_nftrs) if use_lmodel else id_l1
+        else:
+            self.lambda_model = lambda_model
+
+    def forward(self, x, state=None):
+        if self.gen_sp_type in ["default","reshape"]:
+            _, sims, num_spixels = ssn_iter(x, self.stoken_size,
+                                         self.n_iter, self.M,
+                                         self.affinity_softmax,
+                                         self.softmax_order,
+                                         self.use_grad)
+            if self.reshape_output:
+                H = x.shape[-2]
+                sH = H//self.stoken_size[0]
+                shape_str = 'b (sh sw) (h w) -> b h w sh sw'
+                sims = rearrange(sims,shape_str,h=H,sh=sH)
+        elif self.gen_sp_type in ["unet","ssn"]:
+            B,F,H,W = x.shape
             H = x.shape[-2]
-            sH = (H-1)//stoken_size[0]
-            print("sims.shape: ",sims.shape)
-            shape_str = 'b (h w) (sh sw) -> b h w sh sw'
+            sH = H//self.stoken_size[0]
+
+            if self.use_state:
+                x = th.cat([x,state],-3) # stack across channels
+            if self.use_pwd:
+                pwd = get_pwd(x,self.stoken_size,self.affinity_softmax,self.M)
+                pwd = pwd.reshape(B,9,H,W)
+                # print("pwd.shape: ",pwd.shape)
+                x = th.cat([x,pwd],-3) # stack across channels
+
+            sims = self.ssn(x)
+            # print(sims[0,:,64,64])
+            # # print(sims.shape)
+            # exit()
+            if self.use_state: state = sims
+            sims = sparse_to_full(sims,self.stoken_size[0])
+            # print("sims.shape: ",sims.shape)
+            shape_str = 'b (sh sw) (h w) -> b h w sh sw'
             sims = rearrange(sims,shape_str,h=H,sh=sH)
+            num_spixels = 0 # unused
 
-        return sims, num_spixels
-
-def calc_init_centroid(images, num_spixels_width, num_spixels_height):
-    """
-    calculate initial superpixels
-    Args:
-        images: torch.Tensor
-            A Tensor of shape (B, C, H, W)
-        spixels_width: int
-            initial superpixel width
-        spixels_height: int
-            initial superpixel height
-    Return:
-        centroids: torch.Tensor
-            A Tensor of shape (B, C, H * W)
-        init_label_map: torch.Tensor
-            A Tensor of shape (B, H * W)
-        num_spixels_width: int
-            A number of superpixels in each column
-        num_spixels_height: int
-            A number of superpixels int each raw
-    """
-    batchsize, channels, height, width = images.shape
-    device = images.device
-
-    # ones = th.ones_like(images)
-    # print("ones.shape: ",ones.shape)
-    centroids = torch.nn.functional.adaptive_avg_pool2d(images,\
-                                    (num_spixels_height, num_spixels_width))
-
-    with torch.no_grad():
-        num_spixels = num_spixels_width * num_spixels_height
-        labels = torch.arange(num_spixels, device=device).reshape(1, 1, *centroids.shape[-2:]).type_as(centroids)
-        init_label_map = torch.nn.functional.interpolate(labels, size=(height, width), mode="nearest")
-        init_label_map = init_label_map.repeat(batchsize, 1, 1, 1)
-
-    init_label_map = init_label_map.reshape(batchsize, -1)
-    centroids = centroids.reshape(batchsize, channels, -1)
-
-    return centroids, init_label_map
+        elif self.gen_sp_type in ["modulated"]:
+            B,F,H,W = x.shape
 
 
-@torch.no_grad()
-def get_abs_indices(init_label_map, num_spixels_width):
-    b, n_pixel = init_label_map.shape
-    device = init_label_map.device
-    r = torch.arange(-1, 2.0, device=device)
-    relative_spix_indices = torch.cat([r - num_spixels_width, r, r + num_spixels_width], 0)
+            # print(self.use_state,self.use_pwd)
+            if self.use_state:
+                x = th.cat([x,state],-3) # stack across channels
+            if self.use_pwd:
+                if self.use_state:
+                    state = state.reshape(x.shape[0],2,-1)
+                    M,aff = state[:,[0]],state[:,[1]]
+                    M = M.reshape((B,1,H,W))
+                else:
+                    aff,M = self.affinity_softmax,self.M
+                pwd = get_pwd(x,self.stoken_size,M,aff)
+                pwd = pwd.reshape(B,9,H,W)
+                # print("x.shape: ",x.shape)
+                # print("pwd.shape: ",pwd.shape)
+                x = th.cat([x,pwd],-3) # stack across channels
 
-    abs_pix_indices = torch.arange(n_pixel, device=device)[None, None].repeat(b, 9, 1).reshape(-1).long()
-    abs_spix_indices = (init_label_map[:, None] + relative_spix_indices[None, :, None]).reshape(-1).long()
-    abs_batch_indices = torch.arange(b, device=device)[:, None, None].repeat(1, 9, n_pixel).reshape(-1).long()
+            # print("x.shape: ",x.shape)
+            ssn_params = self.lambda_model(x)
+            if self.use_state: state = ssn_params
+            ssn_params = ssn_params.reshape(x.shape[0],2,-1)
+            m_params,temp_params = ssn_params[:,[0]],ssn_params[:,[1]]
+            m_params = m_params.reshape((B,1,H,W))
+            # print("temp_params.shape: ",temp_params.shape)
+            aff, sims, num_spixels = ssn_iter(x, self.stoken_size,
+                                              self.n_iter,
+                                              # self.M,
+                                              m_params,
+                                              temp_params,
+                                              self.softmax_order,
+                                              self.use_grad)
+            if self.reshape_output:
+                H = x.shape[-2]
+                sH = H//self.stoken_size[0]
+                shape_str = 'b (sh sw) (h w) -> b h w sh sw'
+                sims = rearrange(sims,shape_str,h=H,sh=sH)
+            # H = x.shape[-2]
+            # sH = H//self.stoken_size[0]
+            # sims = self.ssn(x)
+            # sims = sparse_to_full(sims,self.stoken_size[0])
+            # # print("sims.shape: ",sims.shape)
+            # shape_str = 'b (sh sw) (h w) -> b h w sh sw'
+            # sims = rearrange(sims,shape_str,h=H,sh=sH)
+            # num_spixels = 0 # unused
 
-    return torch.stack([abs_batch_indices, abs_spix_indices, abs_pix_indices], 0)
+        return sims, num_spixels, state
 
+def get_indices(B,H,W,sH,sW,device):
+    sHW = sH*sW
+    labels = th.arange(sHW, device=device).reshape(1, 1, sH, sW).float()
+    interp = th.nn.functional.interpolate
+    labels = interp(labels, size=(H, W), mode="nearest").long()
+    labels = labels.repeat(B, 1, 1, 1)
+    labels = labels.reshape(B, -1)
+    return labels
 
-@torch.no_grad()
-def get_hard_abs_labels(affinity_matrix, init_label_map, num_spixels_width):
-    relative_label = affinity_matrix.max(1)[1]
-    r = torch.arange(-1, 2.0, device=affinity_matrix.device)
-    relative_spix_indices = torch.cat([r - num_spixels_width, r, r + num_spixels_width], 0)
-    label = init_label_map + relative_spix_indices[relative_label]
-    return label.long()
+def sparse_to_full(sims,S):
+    B,_,H,W = sims.shape
+    sH,sW = H//S,W//S
+    sHW = sH*sW
+    ilabels = get_indices(B,H,W,sH,sW,sims.device)
+    abs_indices = get_abs_indices(ilabels, sW)
+    mask = (abs_indices[1] >= 0) * (abs_indices[1] < sHW)
+    reshaped_affinity_matrix = sims.reshape(-1)
+    sparse_abs_affinity = torch.sparse_coo_tensor(abs_indices[:, mask],
+                                                  reshaped_affinity_matrix[mask])
+    abs_affinity = sparse_abs_affinity.to_dense().contiguous()
+    return abs_affinity
 
 
 def ssn_iter(pixel_features, stoken_size=[16, 16],
              n_iter=2, M = 0., affinity_softmax=1.,
-             softmax_order="v0", use_grad=False,
-             return_sparse=False):
+             softmax_order="v0", use_grad=False,):
     """
     computing assignment iterations
     detailed process is in Algorithm 1, line 2 - 6
@@ -132,10 +199,17 @@ def ssn_iter(pixel_features, stoken_size=[16, 16],
     num_spixels_width = width // swidth
     num_spixels = num_spixels_height * num_spixels_width
 
+    if use_grad == "detach_x":
+        pixel_features = pixel_features.detach()
+    if use_grad is False: use_grad = False
+    else: use_grad = True
+
     # -- add grid --
     from stnls.dev.slic.utils import append_grid,add_grid
     # print("pixel_features.shape: ",pixel_features.shape,M/stoken_size[0])
     # pixel_features = append_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
+    # print("M.shape: ",M.shape,pixel_features.shape)
+    if th.is_tensor(M): M = M[:,None]
     pixel_features = append_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
     # pixel_features = add_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
     # print(pixel_features[:,:-2,:,:].abs().mean(),pixel_features[:,2:,:,:].abs().mean())
@@ -157,6 +231,8 @@ def ssn_iter(pixel_features, stoken_size=[16, 16],
     permuted_pixel_features = pixel_features.permute(0, 2, 1).contiguous()
     assert softmax_order in ["v0","v1"], "Softmax order must be v0, v1."
 
+    # print("use_grad: ",use_grad)
+    # exit()
     with torch.set_grad_enabled(use_grad):
         for k in range(n_iter):
 
@@ -165,6 +241,7 @@ def ssn_iter(pixel_features, stoken_size=[16, 16],
                     pixel_features, spixel_features, init_label_map,
                 num_spixels_width, num_spixels_height)
             # print("dist_matrix.shape: ",dist_matrix.shape)
+            # print(affinity_softmax.shape)
             # exit()
             if softmax_order == "v0":
                 affinity_matrix = (-affinity_softmax*dist_matrix).softmax(1)
@@ -189,7 +266,7 @@ def ssn_iter(pixel_features, stoken_size=[16, 16],
 
                 spixel_features = spixel_features.permute(0, 2, 1).contiguous()
 
-    return abs_affinity, num_spixels
+    return affinity_matrix, abs_affinity, num_spixels
 
 
 

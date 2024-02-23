@@ -46,9 +46,9 @@ __global__ void ssna_agg_forward_kernel(
     int nspix = attn.size(2);
     int height = attn.size(3);
     int width = attn.size(4);
-    int ksize_sq = attn.size(4);
+    int ksize_sq = attn.size(5);
     int nftrs = imgV.size(4);
-    int num_pix = height *width;
+    int num_pix = height * width;
     int sH = sims.size(3);
     int sW = sims.size(4);
 
@@ -76,16 +76,16 @@ __global__ void ssna_agg_forward_kernel(
     int v_hi = get_window_start(hi, height, neigh_size)+h_offset;
     int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
 
-    // -- read sims --
-    int s_hi = sinds[hi][wi][0]+(si % 3 - 1);
+    // -- read sims; P(L_i = s) --
+    int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
     int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
     scalar_t sim_prob = valid ? sims[ibatch][hi][wi][s_hi][s_wi] : 0;
 
     // -- simplify indexing --
-    auto attn_b = attn[ibatch][ihead][si][hi][wi];
     auto imgV_b = imgV[ibatch][ihead];
+    auto attn_b = attn[ibatch][ihead][si][hi][wi];
     scalar_t attn_val = sim_prob*attn_b[attn_offset];
 
     // -- accumulate --
@@ -115,7 +115,7 @@ void ssna_agg_forward_cuda(torch::Tensor imgOut,
     int nspix = attn.size(2);
     int height = attn.size(3);
     int width = attn.size(4);
-    int ksize_sq = attn.size(4);
+    int ksize_sq = attn.size(5);
     int kernel_size = std::sqrt(ksize_sq);
     int num_pix = height*width;
 
@@ -126,6 +126,10 @@ void ssna_agg_forward_cuda(torch::Tensor imgOut,
     int nblocks_ksize = (ksize_sq-1)/nthreads_ksize+1;
     dim3 nthreads(nthreads_pix,nthreads_ksize,nspix);
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
+    // fprintf(stdout,"nthreads_pix,nthreads_ksize,nspix: %d,%d,%d\n",
+    //         nthreads_pix,nthreads_ksize,nspix);
+    // fprintf(stdout,"nblocks_pix,nblocks_ksize,nbatch*nheads: %d,%d,%d\n",
+    //         nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn.type(), "forward_kernel", ([&] {
         ssna_agg_forward_kernel<scalar_t><<< nblock, nthreads >>>(
             imgOut.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
@@ -145,7 +149,7 @@ template <typename scalar_t>
 __global__ void ssna_agg_backward_kernel(
     torch::PackedTensorAccessor32<scalar_t,6,torch::RestrictPtrTraits> d_attn,
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_imgV,
-    const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_sims,
+    torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_sims,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_imgOut,
     const torch::PackedTensorAccessor32<scalar_t,6,torch::RestrictPtrTraits> attn,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> imgV,
@@ -157,9 +161,9 @@ __global__ void ssna_agg_backward_kernel(
     // -- unpack --
     int nbatch = attn.size(0);
     int nheads = attn.size(1);
-    int height = attn.size(2);
-    int width = attn.size(3);
-    int ksize_sq = attn.size(4);
+    int height = attn.size(3);
+    int width = attn.size(4);
+    int ksize_sq = attn.size(5);
     int nftrs = imgV.size(4);
     int num_pix = height *width;
     int sH = sims.size(3);
@@ -189,7 +193,7 @@ __global__ void ssna_agg_backward_kernel(
     int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
 
     // -- read sims --
-    int s_hi = sinds[hi][wi][0]+(si % 3 - 1);
+    int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
     int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
@@ -211,8 +215,12 @@ __global__ void ssna_agg_backward_kernel(
       val = imgV[ibatch][ihead][v_hi][v_wi][iftr];
       acc_attn_grad += val*dval;
     }
-    atomicAdd(&(d_attn[ibatch][ihead][si][hi][wi][attn_offset]),acc_attn_grad);
-    atomicAdd(&(d_attn[ibatch][ihead][si][hi][wi][attn_offset]),attn_val*acc_attn_grad);
+
+    // ...
+    atomicAdd(&(d_attn[ibatch][ihead][si][hi][wi][attn_offset]),sim_prob*acc_attn_grad);
+    if (valid and (sim_prob>0)){
+      atomicAdd(&(d_sims[ibatch][hi][wi][s_hi][s_wi]),attn_val*acc_attn_grad);
+    }
 
 }
 
@@ -243,7 +251,7 @@ void ssna_agg_backward_cuda(torch::Tensor d_attn,
     int nspix = attn.size(2);
     int height = attn.size(3);
     int width = attn.size(4);
-    int ksize_sq = attn.size(4);
+    int ksize_sq = attn.size(5);
     int kernel_size = std::sqrt(ksize_sq);
     int num_pix = height*width;
 

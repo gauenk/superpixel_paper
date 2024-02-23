@@ -15,7 +15,7 @@ from easydict import EasyDict as edict
 from pathlib import Path
 #from .share import config_via_spa
 from ..spa_config import config_via_spa
-
+import torchvision.transforms.functional as tv_F
 
 # parser = argparse.ArgumentParser(description='SPIN')
 # ## yaml configuration files
@@ -76,7 +76,8 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[0]","threads":4,"model":"model",
+        "gpu_ids":"[0]","threads":4,
+        "model":"model","model_name":"simple",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
@@ -91,15 +92,18 @@ def run(cfg):
     cfg = extract_defaults(cfg)
     config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
+    assert cfg.denoise == False
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
     if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoint" / resume_uuid
     else: cfg.resume = None
+    if cfg.upscale == 3:
+        cfg.patch_size = 132
 
     ## set visibel gpu
-    gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
-    print("gpu_ids_str: ",gpu_ids_str)
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
+    # print("gpu_ids_str: ",gpu_ids_str)
+    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
 
     from dev_basics import net_chunks
     from easydict import EasyDict as edict
@@ -114,7 +118,7 @@ def run(cfg):
     device = None
     if cfg.gpu_ids is not None and torch.cuda.is_available():
         print('use cuda & cudnn for acceleration!')
-        print('the gpu id is: {}'.format(cfg.gpu_ids))
+        # print('the gpu id is: {}'.format(cfg.gpu_ids))
         device = torch.device('cuda')
         torch.backends.cudnn.benchmark = True
     else:
@@ -127,10 +131,17 @@ def run(cfg):
 
     ## definitions of model
     try:
-        import_str = 'superpixel_paper.models.{}'.format(cfg.model)
+        if cfg.model_name == "simple":
+            import_str = 'superpixel_paper.models.{}'.format(cfg.model)
+        elif cfg.model_name == "spin":
+            import_str = 'superpixel_paper.spin.model'
+        else:
+            raise ValueError("")
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')
+    num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
+    print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
     model = nn.DataParallel(model).to(device)
 
     ## definition of loss and optimizer
@@ -190,6 +201,12 @@ def run(cfg):
     # exit()
     sys.stdout.flush()
 
+    # -- chunking for validation --
+    chunk_cfg = edict()
+    chunk_cfg.spatial_chunk_size = 96
+    chunk_cfg.spatial_chunk_sr = cfg.upscale
+    chunk_cfg.spatial_chunk_overlap = 0.25
+
     ## start training
     timer_start = time.time()
     for epoch in range(start_epoch, cfg.nepochs+1):
@@ -237,6 +254,15 @@ def run(cfg):
             model = model.eval()
             for valid_dataloader in valid_dataloaders:
                 # fwd_fxn = lambda vid: model(vid[:,0])[:,None]
+                fwd_fxn = lambda vid: model(vid[:,0])[:,None]
+                fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
+                def forward(_sample):
+                    with th.no_grad():
+                        sr = fwd_fxn(_sample[:,None])[:,0]
+                    # run = lambda fxn: fxn(sr).item()
+                    # print("[min,max,mean]: ",run(th.min),run(th.max),run(th.mean))
+                    # print("sr,lr [shapes]: ",sr.shape,lr.shape)
+                    return sr
                 # fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
                 # def forward(lr):
                 #     with th.no_grad():
@@ -247,6 +273,11 @@ def run(cfg):
                 loader = valid_dataloader['dataloader']
                 th.manual_seed(123)
                 for lr, hr in tqdm(loader, ncols=80):
+                    # if cfg.upscale == 3:
+                    #     # lr = tv_F.center_crop(lr,(112,112))
+                    #     # hr = tv_F.center_crop(hr,(336,336))
+                    if (lr.shape[-2] == 172) and (lr.shape[-1] == 114):
+                        continue
                     if cfg.denoise:
                         lr = hr + cfg.sigma*th.randn_like(hr)
                     lr, hr = lr.to(device), hr.to(device)
@@ -254,10 +285,14 @@ def run(cfg):
                     # sr = forward(lr)
                     # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
                     with th.no_grad():
-                        sr = model(lr)
+                        # sr = model(lr)
+                        sr = forward(lr)
                     # quantize output to [0, 255]
                     hr = hr.clamp(0, 255)
                     sr = sr.clamp(0, 255)
+                    srH,srW = sr.shape[-2:]
+                    # print("sr.shape,hr.shape: ",sr.shape,hr.shape)
+                    hr = hr[...,:srH,:srW]
                     # conver to ycbcr
                     if cfg.colors == 3:
                         hr_ycbcr = utils.rgb_to_ycbcr(hr)
@@ -265,8 +300,8 @@ def run(cfg):
                         hr = hr_ycbcr[:, 0:1, :, :]
                         sr = sr_ycbcr[:, 0:1, :, :]
                     # crop image for evaluation
-                    hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
-                    sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+                    # hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+                    # sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
                     # calculate psnr and ssim
                     psnr = utils.calc_psnr(sr, hr)
                     ssim = utils.calc_ssim(sr, hr)

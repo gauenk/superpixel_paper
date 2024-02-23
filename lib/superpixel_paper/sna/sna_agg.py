@@ -25,17 +25,17 @@ class NeighSuperpixelAgg(nn.Module):
     """
 
 
-    def __init__(
-        self,
-        dim,
-        num_heads,
-        kernel_size,
-        dilation=1,
-        v_bias=True,
-        attn_drop=0.0,
-        proj_drop=0.0,
-        use_proj=True,
-    ):
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 kernel_size,
+                 dilation=1,
+                 v_bias=True,
+                 attn_drop=0.0,
+                 proj_drop=0.0,
+                 use_proj=True,
+                 use_weights=True,
+                 v_layer=None,proj_layer=None):
         super().__init__()
 
         # -- for padding --
@@ -51,14 +51,24 @@ class NeighSuperpixelAgg(nn.Module):
 
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
-        # self.v = nn.Linear(dim, dim * 1, bias=v_bias)
-        self.v = nn.Identity()
+        self.use_weights = use_weights
+
+        if self.use_weights:
+            if v_layer is None:
+                self.v = nn.Linear(dim, dim * 1, bias=v_bias)
+            else:
+                self.v = v_layer
+        else:
+            self.v = nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
 
         use_proj = True
         self.use_proj = use_proj
         if self.use_proj:
-            self.proj = nn.Linear(dim, dim)
+            if proj_layer is None:
+                self.proj = nn.Linear(dim, dim)
+            else:
+                self.proj = proj_layer
             self.proj_drop = nn.Dropout(proj_drop)
         else:
             self.proj = nn.Identity()

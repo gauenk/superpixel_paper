@@ -1,7 +1,8 @@
 import math
 # import torch as th
 import argparse, yaml
-from . import sr_utils as utils
+# from . import sr_utils as utils
+from superpixel_paper.deno_trte import sr_utils as utils
 import os
 from tqdm import tqdm
 import logging
@@ -90,12 +91,15 @@ def extract_defaults(_cfg):
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
         "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[1]","threads":4,"model":"model",
+        "gpu_ids":"[1]","threads":4,
+        "model":"model","model_name":"simple",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False}
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False,
+        "spatial_chunk_size":256,"spatial_chunk_overlap":0.25,
+        "gradient_clip":0.}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
 
@@ -142,11 +146,20 @@ def run(cfg):
 
     ## definitions of model
     try:
-        import_str = 'superpixel_paper.models.{}'.format(cfg.model)
+        if cfg.model_name == "simple":
+            import_str = 'superpixel_paper.models.{}'.format(cfg.model)
+        elif cfg.model_name == "nlrn":
+            import_str = 'superpixel_paper.nlrn.model'
+        else:
+            raise ValueError("")
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')
+    print(model)
+    num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
+    print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
     model = nn.DataParallel(model).to(device)
+
 
     ## definition of loss and optimizer
     loss_func = nn.L1Loss()
@@ -161,6 +174,7 @@ def run(cfg):
         # print(chkpt_files)
         if len(chkpt_files) != 0:
             chkpt_files = sorted(chkpt_files, key=lambda x: int(x.replace('.ckpt','').split('=')[-1]))
+            print("Resuming from ",chkpt_files[-1])
             chkpt = torch.load(chkpt_files[-1])
             prev_epoch = chkpt['epoch']
             start_epoch = prev_epoch + 1
@@ -175,6 +189,8 @@ def run(cfg):
             chkpt_path = os.path.join(cfg.log_path, 'checkpoints', experiment_name)
             log_name = os.path.join(logging_path,'log.txt')
             print('select {}, resume training from epoch {}.'.format(chkpt_files[-1], start_epoch))
+            # if not os.path.exists(logging_path): os.makedirs(logging_path)
+            # if not os.path.exists(chkpt_path): os.makedirs(chkpt_path)
     else:
         ## auto-generate the output logname
         experiment_name = cfg.uuid
@@ -189,16 +205,19 @@ def run(cfg):
         log_name = os.path.join(logging_path,'log.txt')
         stat_dict = utils.get_stat_dict()
         ## create folder for chkpt and stat
-        if not os.path.exists(logging_path): os.makedirs(logging_path)
-        if not os.path.exists(chkpt_path): os.makedirs(chkpt_path)
-        # experiment_model_path = os.path.join(experiment_path, 'checkpoints')
-        # if not os.path.exists(experiment_model_path):
-        #     os.makedirs(experiment_model_path)
-        ## save training paramters
-        exp_params = vars(cfg)
-        exp_params_name = os.path.join(logging_path,'config.yml')
-        with open(exp_params_name, 'w') as exp_params_file:
-            yaml.dump(exp_params, exp_params_file, default_flow_style=False)
+
+    # -- init log --
+    if not os.path.exists(logging_path): os.makedirs(logging_path)
+    if not os.path.exists(chkpt_path): os.makedirs(chkpt_path)
+    # experiment_model_path = os.path.join(experiment_path, 'checkpoints')
+    # if not os.path.exists(experiment_model_path):
+    #     os.makedirs(experiment_model_path)
+    ## save training paramters
+    exp_params = vars(cfg)
+    exp_params_name = os.path.join(logging_path,'config.yml')
+    with open(exp_params_name, 'w') as exp_params_file:
+        yaml.dump(exp_params, exp_params_file, default_flow_style=False)
+
 
     ## print architecture of model
     time.sleep(3) # sleep 3 seconds
@@ -209,9 +228,9 @@ def run(cfg):
 
     # -- chunking for validation --
     chunk_cfg = edict()
-    chunk_cfg.spatial_chunk_size = 256
     chunk_cfg.spatial_chunk_sr = cfg.upscale
-    chunk_cfg.spatial_chunk_overlap = 0.25
+    chunk_cfg.spatial_chunk_size = cfg.spatial_chunk_size
+    chunk_cfg.spatial_chunk_overlap = cfg.spatial_chunk_overlap
 
     ## start training
     timer_start = time.time()
@@ -235,6 +254,9 @@ def run(cfg):
             loss = th.sqrt(th.mean((sr-hr)**2)+eps**2)
             # loss_func(sr, hr)
             loss.backward()
+            if cfg.gradient_clip > 0:
+                clip = cfg.gradient_clip
+                th.nn.utils.clip_grad_norm_(model.parameters(),clip)
             # vgrad = hooks.get_qkv_grads(model)
             # print(vgrad.shape)
             # exit()
@@ -278,14 +300,16 @@ def run(cfg):
                     if cfg.denoise:
                         lr = hr + cfg.sigma*th.randn_like(hr)
                     lr, hr = lr.to(device), hr.to(device)
+                    # print(lr.shape,hr.shape)
                     # if cfg.topk > 600:
-                    #     lr = lr[:,:,:256]
-                    #     hr = hr[:,:,:cfg.upscale*256]
+                    if lr.shape[-1] == 228: # just a specific example
+                        lr = lr[...,:224]
+                        hr = hr[...,:cfg.upscale*224]
                     torch.cuda.empty_cache()
                     # sr = forward(lr)
                     # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
                     with th.no_grad():
-                        if cfg.topk > 500:
+                        if (cfg.topk > 500) or (cfg.model_name == "nlrn"):
                             sr = chunk_forward(lr)
                         else:
                             sr = model(lr)

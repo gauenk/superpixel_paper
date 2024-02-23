@@ -54,9 +54,14 @@ class AttentionHook():
 
         # -- add hook --
         for name,layer in self.net.named_modules():
-            for buf in self.bufs:
-                if buf in name:
-                    layer.register_forward_hook(self.save_outputs_hook(buf,name))
+            name_s = name.split(".")
+            if (len(name_s) < 3): continue
+            if not(("blocks" in name_s[0])): continue
+            if not(("ssna" in name_s[2])): continue
+            pass
+            # for buf in self.bufs:
+            #     if buf in name:
+            #         layer.register_forward_hook(self.save_outputs_hook(buf,name))
 
     def save_outputs_hook(self, buffer_name: str, layer_id: str) -> Callable:
         buff = getattr(self,buffer_name)
@@ -98,42 +103,6 @@ def sp_to_mask(imgSp):
     masks = th.cat(masks)
     return masks
 
-
-def draw_seg(img,imgSp):
-    ncols = 1500
-    # cm = pylab.get_cmap('gist_rainbow')
-    cm = pylab.get_cmap('prism')
-    def index2color(i):
-        nmax = 200
-        cm_i = ((1.*(i%nmax))/nmax) % 1
-        color = [int(255.*i.item()) for i in cm(cm_i)]
-        color = [color[0],color[1],color[2]]
-        return tuple(color)
-
-    # -- masks --
-    masks = sp_to_mask(imgSp)
-    img_ui = th.clamp(255*img,0,255).type(th.uint8)[0].cpu()
-    color_map = [index2color(i%ncols) for i in range(ncols)]
-    seg_result = draw_segmentation_masks(
-        img_ui*0, masks.cpu(), alpha=0.3,
-        # colors="blue",
-        colors=color_map,
-    )
-    return seg_result.to(img.device)
-
-# def nicer_image(vid):
-#     B = vid.shape[0]
-#     H,W = vid.shape[-2:]
-#     cH = 6*H
-#     cW = 6*W
-#     ndim = vid.ndim
-#     if ndim == 5:
-#         vid = rearrange(vid,'b t ... -> (b t) ...')
-#     vid = TF.resize(vid,(cH,cW),InterpolationMode.NEAREST)
-#     if ndim == 5:
-#         vid = rearrange(vid,'(b t) ... -> b t ...',b=B)
-#     return vid
-
 def main():
 
 
@@ -150,9 +119,9 @@ def main():
     # -- read config --
     # fn_a = "exps/trte_deno/viz_attn_layer.cfg"
     fn_a = "exps/trte_deno/train.cfg"
-    fn_b = ".cache_io_exps/trte_deno/viz_attn_layer/"
+    fn_b = ".cache_io_exps/trte_deno/viz_smoothing_as_ft/"
     refresh = True
-    read_test = cache_io.read_test_config.run
+    # read_test = cache_io.read_test_config.run
     # exps = read_test(fn_a,fn_b,reset=refresh,skip_dne=refresh)
     # exps,_uuids = cache_io.get_uuids(exps,".cache_io_exps/viz_attn_layer/",
     #                                 read=not(refresh),no_config_check=False)
@@ -165,20 +134,15 @@ def main():
     for uuid,exp in zip(_uuids,exps):
         uuid_s = str(uuid)[:4]
         cfg = extract_deno_defaults(exp)
-        # cfg.M = 0.001
-        # cfg.M = 0.1
-        # cfg.M = 0.02
-        # cfg.M = 0.5
-        # cfg.M = 10.
-        # cfg.M = 0.002
         config_via_spa(cfg)
         uuids.append(uuid_s)
         cfgs.append(cfg)
-        # print(uuid_s,cfg.spa_version,cfg.spa_scale,cfg.nsa_mask_labels)
+        print(uuid_s,cfg.spa_version,cfg.gen_sp_type,cfg.nsa_mask_labels)
         print("name,use_mask?,use_skip? ",uuid_s,cfg.nsa_mask_labels,cfg.use_skip)
         import_str = 'superpixel_paper.models.{}'.format(cfg.model)
         model = utils.import_module(import_str).create_model(cfg).to(device)
         hook = apply_hooks(model)
+        exit()
         models[uuid_s] = model
         hooks[uuid_s] = hook
         # break

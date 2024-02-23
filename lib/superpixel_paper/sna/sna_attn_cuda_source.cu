@@ -26,7 +26,7 @@ int get_window_start(const int index, const int length, const int neigh_size){
 }
 
 template <typename scalar_t>
-__global__ void nsa_attn_forward_kernel(
+__global__ void sna_attn_forward_kernel(
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> imgQ,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> imgK,
@@ -79,7 +79,7 @@ __global__ void nsa_attn_forward_kernel(
     attn_b[attn_offset] = val;
 }
 
-void nsa_attn_forward_cuda(torch::Tensor attn,
+void sna_attn_forward_cuda(torch::Tensor attn,
                            const torch::Tensor imgQ,
                            const torch::Tensor imgK,
                            const torch::Tensor imgSp){
@@ -108,7 +108,7 @@ void nsa_attn_forward_cuda(torch::Tensor attn,
     dim3 nthreads(nthreads_pix,nthreads_ksize);
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn.type(), "forward_kernel", ([&] {
-        nsa_attn_forward_kernel<scalar_t><<< nblock, nthreads >>>(
+        sna_attn_forward_kernel<scalar_t><<< nblock, nthreads >>>(
             // imgOut.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             attn.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             imgQ.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
@@ -122,7 +122,7 @@ void nsa_attn_forward_cuda(torch::Tensor attn,
 
 
 template <typename scalar_t>
-__global__ void nsa_attn_backward_kernel(
+__global__ void sna_attn_backward_kernel(
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_imgQ,
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_imgK,
     torch::PackedTensorAccessor32<scalar_t,3,torch::RestrictPtrTraits> d_imgSp,
@@ -187,7 +187,7 @@ __global__ void nsa_attn_backward_kernel(
     // atomicAdd(&(d_imgSp[ibatch][ihead][v_hi][v_wi]),acc_imgSp_grad*attn_val);
 }
 
-void nsa_attn_backward_cuda(torch::Tensor d_imgQ,
+void sna_attn_backward_cuda(torch::Tensor d_imgQ,
                             torch::Tensor d_imgK,
                             torch::Tensor d_imgSp,
                             const torch::Tensor d_attn,
@@ -222,7 +222,7 @@ void nsa_attn_backward_cuda(torch::Tensor d_imgQ,
     dim3 nthreads(nthreads_pix,nthreads_ksize);
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(d_attn.type(), "backward_kernel", ([&] {
-        nsa_attn_backward_kernel<scalar_t><<< nblock, nthreads >>>(
+        sna_attn_backward_kernel<scalar_t><<< nblock, nthreads >>>(
             d_imgQ.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             d_imgK.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             d_imgSp.packed_accessor32<scalar_t,3,torch::RestrictPtrTraits>(),
@@ -236,9 +236,9 @@ void nsa_attn_backward_cuda(torch::Tensor d_imgQ,
 }
 
 
-void init_nsa_attn(py::module &m){
-  m.def("nsa_attn_forward", &nsa_attn_forward_cuda,
+void init_sna_attn(py::module &m){
+  m.def("sna_attn_forward", &sna_attn_forward_cuda,
         "neighborhood superpixel atten forward");
-  m.def("nsa_attn_backward", &nsa_attn_backward_cuda,
+  m.def("sna_attn_backward", &sna_attn_backward_cuda,
         "neighborhood superpixel atten backward");
 }

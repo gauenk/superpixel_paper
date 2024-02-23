@@ -21,7 +21,7 @@ def normalize_attention(version,attn,sims,mask,nsamples):
         # print("nsamples: ",nsamples)
         # exit()
         # c = (attn).max().item()
-        # attn = th.exp(attn - c + th.log(eps+th.sum(th.exp(attn-c))))
+        # attn = th.exp(attn - c + th.log(eps+th.sum(th.exp(attn-c),-1)))
         # attn = th.exp(attn)
         # eps = 1e-10
         c = (attn).max().item()
@@ -50,7 +50,7 @@ def normalize_attention(version,attn,sims,mask,nsamples):
         # -- attn --
         eps = 1e-6
         c = (mask*attn).max().item()
-        attn = th.exp(mask*attn - c - th.log(eps+th.sum(mask*th.exp(attn-c))))
+        attn = th.exp(mask*attn - c - th.log(eps+th.sum(mask*th.exp(attn-c),-1)))
 
         # -- softmax --
         # attn = nz_mask*(attn).softmax(dim=-1)
@@ -68,7 +68,7 @@ def normalize_attention(version,attn,sims,mask,nsamples):
         mask = mask[...,None,:,0]
         eps = 1e-6
         c = (mask*attn).max().item()
-        attn = th.exp(attn - c - th.log(eps+th.sum(mask*th.exp(attn-c))))
+        attn = th.exp(attn - c - th.log(eps+th.sum(mask*th.exp(attn-c),-1)))
         # eps = 1e-6
         # attn = th.exp(attn)
         # attn = attn / (eps+th.sum(mask*attn,-1,keepdim=True))

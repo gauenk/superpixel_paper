@@ -76,11 +76,12 @@ __global__ void ssna_attn_forward_kernel(
     int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
 
     // -- read sims --
-    int s_hi = sinds[hi][wi][0]+(si % 3 - 1);
+    int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
     int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
-    scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : 0;
+    const scalar_t neg_inf = static_cast<scalar_t>(-INFINITY);
+    scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : neg_inf;
 
     // -- simplify indexing --
     auto attn_b = attn[ibatch][ihead][si][hi][wi];
@@ -88,11 +89,11 @@ __global__ void ssna_attn_forward_kernel(
     auto imgK_pix = imgK[ibatch][ihead][v_hi][v_wi];
 
     // -- accumulate --
-    scalar_t val = 0;
+    scalar_t qk_val = 0;
     for(int iftr=0; iftr < nftrs; iftr++){
-      val += imgQ_pix[iftr] * imgK_pix[iftr];
+      qk_val += imgQ_pix[iftr] * imgK_pix[iftr];
     }
-    attn_b[attn_offset] = sim_prob*val;
+    attn_b[attn_offset] = valid ? sim_prob*qk_val: neg_inf;
 }
 
 void ssna_attn_forward_cuda(torch::Tensor attn,
@@ -120,7 +121,7 @@ void ssna_attn_forward_cuda(torch::Tensor attn,
     int num_pix = height*width;
 
     // -- block --
-    int nthreads_pix = 12;
+    int nthreads_pix = 14;
     int nthreads_ksize = 8;
     int nblocks_pix = (num_pix-1)/nthreads_pix+1;
     int nblocks_ksize = (ksize_sq-1)/nthreads_ksize+1;
@@ -128,7 +129,6 @@ void ssna_attn_forward_cuda(torch::Tensor attn,
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn.type(), "forward_kernel", ([&] {
         ssna_attn_forward_kernel<scalar_t><<< nblock, nthreads >>>(
-            // imgOut.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             attn.packed_accessor32<scalar_t,6,torch::RestrictPtrTraits>(),
             imgQ.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             imgK.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
@@ -200,7 +200,7 @@ __global__ void ssna_attn_backward_kernel(
     auto imgK_pix = imgK[ibatch][ihead][v_hi][v_wi];
 
     // -- read sims --
-    int s_hi = sinds[hi][wi][0]+(si % 3 - 1);
+    int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
     int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
@@ -212,13 +212,21 @@ __global__ void ssna_attn_backward_kernel(
     scalar_t attn_val = attn[ibatch][ihead][si][hi][wi][attn_offset];
     scalar_t d_attn_val = d_attn[ibatch][ihead][si][hi][wi][attn_offset];
     scalar_t d_attn_sim_val = sim_prob*d_attn_val;
+    scalar_t qk_val = 0;
     for(int iftr=0; iftr < nftrs; iftr++){
       atomicAdd(&(d_imgQ[ibatch][ihead][hi][wi][iftr]),d_attn_sim_val*imgK_pix[iftr]);
       atomicAdd(&(d_imgK[ibatch][ihead][v_hi][v_wi][iftr]),d_attn_sim_val*imgQ_pix[iftr]);
+      qk_val += imgQ_pix[iftr] * imgK_pix[iftr];
     }
 
     // -- [dQ,dK] --
-    atomicAdd(&(d_sims[ibatch][v_hi][v_wi][s_hi][s_wi]),d_attn_val*attn_val);
+    // scalar_t eps = static_cast<scalar_t>(0.00001);
+    if (valid){// and (sim_prob>0)){
+      atomicAdd(&(d_sims[ibatch][v_hi][v_wi][s_hi][s_wi]),
+                d_attn_val*qk_val);
+      // atomicAdd(&(d_sims[ibatch][v_hi][v_wi][s_hi][s_wi]),
+      //           d_attn_val*attn_val/sim_prob);
+    }
 }
 
 void ssna_attn_backward_cuda(torch::Tensor d_imgQ,

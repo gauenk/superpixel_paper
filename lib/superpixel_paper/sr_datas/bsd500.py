@@ -10,7 +10,7 @@ import torch
 import torch.utils.data as data
 import skimage.color as sc
 import time
-from spin.utils import ndarray2tensor
+from ..utils import ndarray2tensor
 
 def crop_patch(lr, hr, patch_size, upscale, augment=True):
     # crop patch randomly

@@ -13,7 +13,7 @@ import torch.utils.data as data
 import skimage.color as sc
 from torch.utils.data import DataLoader
 import time
-from spin.utils import ndarray2tensor
+from ..utils import ndarray2tensor
 
 
 class Benchmark(data.Dataset):

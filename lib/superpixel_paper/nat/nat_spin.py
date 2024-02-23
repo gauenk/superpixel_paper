@@ -12,7 +12,6 @@ from einops import rearrange
 
 from natten.functional import natten2dav, natten2dqkrpb
 
-
 class NeighborhoodAttention2D(nn.Module):
     """
     Neighborhood Attention 2D Module
@@ -89,6 +88,7 @@ class NeighborhoodAttention2D(nn.Module):
         else:
             q = self.scale * q
 
+        # print("natten2dqkrpb: ",natten2dqkrpb)
         attn = natten2dqkrpb(q, k, self.rpb, self.kernel_size, self.dilation)
         # attn_0 = attn.clone()
         # print("attn.shape: ",attn.shape)
@@ -96,7 +96,9 @@ class NeighborhoodAttention2D(nn.Module):
         # exit()
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
-        x = natten2dav(attn, v, self.dilation)
+        # print(attn.shape,v.shape,self.dilation)
+        # print("natten2dav: ",natten2dav,self.dilation)
+        x = natten2dav(attn, v, self.kernel_size, self.dilation)
         x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
         if pad_r or pad_b:
             x = x[:, :Hp, :Wp, :]
@@ -113,127 +115,127 @@ class NeighborhoodAttention2D(nn.Module):
 
 
 
-class NeighAttnMat(nn.Module):
-    """
-    Neighborhood Attention 2D Module
-    """
+# class NeighAttnMat(nn.Module):
+#     """
+#     Neighborhood Attention 2D Module
+#     """
 
-    def __init__(
-        self,
-        dim,
-        num_heads,
-        kernel_size,
-        dilation=1,
-        bias=True,
-        qk_bias=True,
-    ):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = dim // self.num_heads
-        assert (
-            kernel_size > 1 and kernel_size % 2 == 1
-        ), f"Kernel size must be an odd number greater than 1, got {kernel_size}."
-        self.kernel_size = kernel_size
-        assert (
-            dilation is None or dilation >= 1
-        ), f"Dilation must be greater than or equal to 1, got {dilation}."
-        self.dilation = dilation or 1
-        self.window_size = self.kernel_size * self.dilation
+#     def __init__(
+#         self,
+#         dim,
+#         num_heads,
+#         kernel_size,
+#         dilation=1,
+#         bias=True,
+#         qk_bias=True,
+#     ):
+#         super().__init__()
+#         self.num_heads = num_heads
+#         self.head_dim = dim // self.num_heads
+#         assert (
+#             kernel_size > 1 and kernel_size % 2 == 1
+#         ), f"Kernel size must be an odd number greater than 1, got {kernel_size}."
+#         self.kernel_size = kernel_size
+#         assert (
+#             dilation is None or dilation >= 1
+#         ), f"Dilation must be greater than or equal to 1, got {dilation}."
+#         self.dilation = dilation or 1
+#         self.window_size = self.kernel_size * self.dilation
 
-        self.qk = nn.Linear(dim, dim * 2, bias=qk_bias)
-        if bias:
-            self.rpb = nn.Parameter(
-                torch.zeros(num_heads, (2 * kernel_size - 1), (2 * kernel_size - 1))
-            )
-            trunc_normal_(self.rpb, std=0.02, mean=0.0, a=-2.0, b=2.0)
-        else:
-            self.register_parameter("rpb", None)
+#         self.qk = nn.Linear(dim, dim * 2, bias=qk_bias)
+#         if bias:
+#             self.rpb = nn.Parameter(
+#                 torch.zeros(num_heads, (2 * kernel_size - 1), (2 * kernel_size - 1))
+#             )
+#             trunc_normal_(self.rpb, std=0.02, mean=0.0, a=-2.0, b=2.0)
+#         else:
+#             self.register_parameter("rpb", None)
 
-    def forward(self, x):
-        B, Hp, Wp, C = x.shape
-        H, W = int(Hp), int(Wp)
-        pad_l = pad_t = pad_r = pad_b = 0
-        if H < self.window_size or W < self.window_size:
-            pad_l = pad_t = 0
-            pad_r = max(0, self.window_size - W)
-            pad_b = max(0, self.window_size - H)
-            x = pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
-            _, H, W, _ = x.shape
-        qk = (
-            self.qk(x)
-            .reshape(B, H, W, 2, self.num_heads, self.head_dim)
-            .permute(3, 0, 4, 1, 2, 5)
-        )
-        q, k = qk[0], qk[1]
-        attn = natten2dqkrpb(q, k, self.rpb, self.kernel_size, self.dilation)
-        return attn
+#     def forward(self, x):
+#         B, Hp, Wp, C = x.shape
+#         H, W = int(Hp), int(Wp)
+#         pad_l = pad_t = pad_r = pad_b = 0
+#         if H < self.window_size or W < self.window_size:
+#             pad_l = pad_t = 0
+#             pad_r = max(0, self.window_size - W)
+#             pad_b = max(0, self.window_size - H)
+#             x = pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+#             _, H, W, _ = x.shape
+#         qk = (
+#             self.qk(x)
+#             .reshape(B, H, W, 2, self.num_heads, self.head_dim)
+#             .permute(3, 0, 4, 1, 2, 5)
+#         )
+#         q, k = qk[0], qk[1]
+#         attn = natten2dqkrpb(q, k, self.rpb, self.kernel_size, self.dilation)
+#         return attn
 
-    def extra_repr(self) -> str:
-        return (
-            f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
-            + f"kernel_size={self.kernel_size}, dilation={self.dilation}, "
-            + f"rel_pos_bias={self.rpb is not None}"
-        )
+#     def extra_repr(self) -> str:
+#         return (
+#             f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
+#             + f"kernel_size={self.kernel_size}, dilation={self.dilation}, "
+#             + f"rel_pos_bias={self.rpb is not None}"
+#         )
 
 
-class NeighAttnAgg(nn.Module):
+# class NeighAttnAgg(nn.Module):
 
-    def __init__(
-        self,
-        dim,
-        num_heads,
-        kernel_size,
-        dilation=1,
-        v_bias=True,
-        attn_drop=0.0,
-        proj_drop=0.0,
-    ):
-        super().__init__()
+#     def __init__(
+#         self,
+#         dim,
+#         num_heads,
+#         kernel_size,
+#         dilation=1,
+#         v_bias=True,
+#         attn_drop=0.0,
+#         proj_drop=0.0,
+#     ):
+#         super().__init__()
 
-        # -- for padding --
-        assert (
-            kernel_size > 1 and kernel_size % 2 == 1
-        ), f"Kernel size must be an odd number greater than 1, got {kernel_size}."
-        self.kernel_size = kernel_size
-        assert (
-            dilation is None or dilation >= 1
-        ), f"Dilation must be greater than or equal to 1, got {dilation}."
-        self.dilation = dilation or 1
-        self.window_size = self.kernel_size * self.dilation
+#         # -- for padding --
+#         assert (
+#             kernel_size > 1 and kernel_size % 2 == 1
+#         ), f"Kernel size must be an odd number greater than 1, got {kernel_size}."
+#         self.kernel_size = kernel_size
+#         assert (
+#             dilation is None or dilation >= 1
+#         ), f"Dilation must be greater than or equal to 1, got {dilation}."
+#         self.dilation = dilation or 1
+#         self.window_size = self.kernel_size * self.dilation
 
-        self.num_heads = num_heads
-        self.head_dim = dim // self.num_heads
-        self.v = nn.Linear(dim, dim * 1, bias=v_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
+#         self.num_heads = num_heads
+#         self.head_dim = dim // self.num_heads
+#         self.v = nn.Linear(dim, dim * 1, bias=v_bias)
+#         self.attn_drop = nn.Dropout(attn_drop)
+#         self.proj = nn.Linear(dim, dim)
+#         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, attn):
-        B, Hp, Wp, C = x.shape
-        H, W = int(Hp), int(Wp)
-        pad_l = pad_t = pad_r = pad_b = 0
-        if H < self.window_size or W < self.window_size:
-            pad_l = pad_t = 0
-            pad_r = max(0, self.window_size - W)
-            pad_b = max(0, self.window_size - H)
-            x = pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
-            _, H, W, _ = x.shape
-        v = (self.v(x)
-            .reshape(B, H, W, 1, self.num_heads, self.head_dim)
-            .permute(3, 0, 4, 1, 2, 5))[0]
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-        x = natten2dav(attn, v, self.dilation)
-        x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
-        if pad_r or pad_b:
-            x = x[:, :Hp, :Wp, :]
+#     def forward(self, x, attn):
+#         B, Hp, Wp, C = x.shape
+#         H, W = int(Hp), int(Wp)
+#         pad_l = pad_t = pad_r = pad_b = 0
+#         if H < self.window_size or W < self.window_size:
+#             pad_l = pad_t = 0
+#             pad_r = max(0, self.window_size - W)
+#             pad_b = max(0, self.window_size - H)
+#             x = pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
+#             _, H, W, _ = x.shape
+#         v = (self.v(x)
+#             .reshape(B, H, W, 1, self.num_heads, self.head_dim)
+#             .permute(3, 0, 4, 1, 2, 5))[0]
+#         attn = attn.softmax(dim=-1)
+#         attn = self.attn_drop(attn)
+#         x = natten2dav(attn, v, self.dilation)
+#         x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
+#         if pad_r or pad_b:
+#             x = x[:, :Hp, :Wp, :]
 
-        return self.proj_drop(self.proj(x))
+#         return self.proj_drop(self.proj(x))
 
-    def extra_repr(self) -> str:
-        return (
-            f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
-        )
+#     def extra_repr(self) -> str:
+#         return (
+#             f"head_dim={self.head_dim}, num_heads={self.num_heads}, "
+#         )
 
 def natten_padding(x,kernel_size):
     window_size = kernel_size*kernel_size

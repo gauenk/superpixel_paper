@@ -206,7 +206,8 @@ def ssn_iter(pixel_features, stoken_size=[16, 16],
     else: use_grad = True
 
     # -- add grid --
-    from stnls.dev.slic.utils import append_grid,add_grid
+    # from stnls.dev.slic.utils import append_grid,add_grid
+    from superpixel_paper.utils import append_grid,add_grid
     # print("pixel_features.shape: ",pixel_features.shape,M/stoken_size[0])
     # pixel_features = append_grid(pixel_features[:,None],M/stoken_size[0])[:,0]
     # print("M.shape: ",M.shape,pixel_features.shape)

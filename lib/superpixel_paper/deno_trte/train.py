@@ -97,7 +97,7 @@ def extract_defaults(_cfg):
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False,
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
         "spatial_chunk_size":256,"spatial_chunk_overlap":0.25,
         "gradient_clip":0.}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
@@ -116,10 +116,10 @@ def run(cfg):
         cfg.resume = None
 
     ## set visibel gpu
-    gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
-    print("gpu_ids_str: ",gpu_ids_str)
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
+    # print("gpu_ids_str: ",gpu_ids_str)
+    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
     seed_everything(cfg.seed)
 
     from dev_basics import net_chunks

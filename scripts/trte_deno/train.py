@@ -29,10 +29,21 @@ def main():
     def clear_fxn(num,cfg): return False
     # exp_fn = "exps/trte_deno/train_snet.cfg"
     # exp_fn = "exps/trte_deno/train.cfg"
-    exp_fn = "exps/trte_deno/train_table.cfg"
-    exps,uuids = cache_io.train_stages.run(exp_fn,
-                                           ".cache_io_exps/trte_deno/train/",
-                                           update=True)
+    # exp_fn_list = ["exps/trte_deno/train_table.cfg"]
+    exp_fn_list = [
+        "exps/trte_deno/train_ksize.cfg",
+        "exps/trte_deno/train_nsp.cfg",
+        "exps/trte_deno/train_snfts.cfg",
+        "exps/trte_deno/train_att_temp.cfg",
+        "exps/trte_deno/train_att_temp_lrn.cfg",
+    ]
+    exps,uuids = [],[]
+    for exp_fn in exp_fn_list:
+        _exps,_uuids = cache_io.train_stages.run(exp_fn,
+                                                 ".cache_io_exps/trte_deno/train/",
+                                                 update=True)
+        exps += _exps
+        uuids += _uuids
     print("Num Exps: ",len(exps))
     print(uuids)
     # exps = list(reversed(exps))

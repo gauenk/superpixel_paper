@@ -33,10 +33,43 @@ def main():
     # fn = "exps/trte_deno/test_early.cfg"
     # fn = "exps/trte_deno/test_snet.cfg"
     # fn = "exps/trte_deno/test.cfg"
-    fn = "exps/trte_deno/test_table.cfg"
-    exps = read_test(fn,".cache_io_exps/trte_deno/test",reset=refresh,skip_dne=refresh)
-    exps,uuids = cache_io.get_uuids(exps,".cache_io/trte_deno/test",
-                                    read=not(refresh),no_config_check=False)
+
+    # -=-=-=-=-=-=-=-=-=-=-=-
+    #
+    # --  operator mode 1  --
+    #
+    # -=-=-=-=-=-=-=-=-=-=-=-
+
+    train_fn_list = [
+        "exps/trte_deno/train_table.cfg",
+        # "exps/trte_deno/train_ksize.cfg",
+        # "exps/trte_deno/train_nsp.cfg",
+        # "exps/trte_deno/train_snfts.cfg",
+        # "exps/trte_deno/train_att_temp.cfg",
+        # "exps/trte_deno/train_att_temp_lrn.cfg",
+    ]
+    te_fn = "exps/trte_deno/test_shell.cfg"
+    exps,uuids = [],[]
+    for tr_fn in train_fn_list:
+        tr_exp = cache_io.fill_test_shell(tr_fn,te_fn)
+        _exps = read_test(tr_exp,".cache_io_exps/trte_deno/test",
+                         reset=refresh,skip_dne=refresh)
+        _exps,_uuids = cache_io.get_uuids(_exps,".cache_io/trte_deno/test",
+                                          read=not(refresh),no_config_check=False)
+        exps += _exps
+        uuids += _uuids
+
+
+    # -=-=-=-=-=-=-=-=-=-=-=-
+    #
+    # --  operator mode 0  --
+    #
+    # -=-=-=-=-=-=-=-=-=-=-=-
+
+    # fn = "exps/trte_deno/test_table.cfg"
+    # exps = read_test(fn,".cache_io_exps/trte_deno/test",reset=refresh,skip_dne=refresh)
+    # exps,uuids = cache_io.get_uuids(exps,".cache_io/trte_deno/test",
+    #                                 read=not(refresh),no_config_check=False)
     print("Num Exps: ",len(exps))
     print(uuids)
 

@@ -112,6 +112,8 @@ def run(cfg):
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
     if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoints" / resume_uuid
     else: cfg.resume = None
+    if not cfg.resume.exists():
+        cfg.resume = None
 
     ## set visibel gpu
     gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')

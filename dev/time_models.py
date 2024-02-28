@@ -47,3 +47,6 @@ for name,layer in model.blocks.named_children():
 x = torch.rand(10,3,96,96).to(device)
 model(x)
 print(take_time_dict)
+
+
+print(model.block0.ssna)

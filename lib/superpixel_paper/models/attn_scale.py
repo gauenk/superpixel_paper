@@ -47,6 +47,7 @@ class UNet(nn.Module):
         self.conv = nn.Conv2d(
             in_channels=features, out_channels=out_channels, kernel_size=1
         )
+        self.lambda_max = 30
 
     def forward(self, x):
         # print("[lamba] x.shape: ",x.shape)
@@ -85,7 +86,8 @@ class UNet(nn.Module):
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
         dec1 = self.conv(dec1)
-        dec1 = F.relu(dec1, inplace=True)
+        # dec1 = F.relu(dec1, inplace=True)
+        dec1 = self.lambda_max * th.sigmoid(dec1)
         return dec1
 
     def forward_meta(self, x, vars):

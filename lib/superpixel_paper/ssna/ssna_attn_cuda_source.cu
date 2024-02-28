@@ -21,7 +21,7 @@
 inline __host__ __device__
 int get_window_start(const int index, const int length, const int neigh_size){
   int new_index = max(index - neigh_size,0);
-  new_index += (index+neigh_size>=length) * (length - index - neigh_size - 1);
+  new_index += ((index+neigh_size)>=length) * (length - index - neigh_size - 1);
   return new_index;
 }
 
@@ -67,11 +67,12 @@ __global__ void ssna_attn_forward_kernel(
     // -- derivative indices --
     int neigh_size = (kernel_size-1)/2;
     int h_offset = attn_offset / kernel_size;
-    int w_offset = attn_offset -  h_offset * kernel_size;
+    // int w_offset = attn_offset -  h_offset * kernel_size;
+    int w_offset = attn_offset % kernel_size;
 
     // -- compute indices --
     int hi = hw_raster / width;
-    int wi = hw_raster - hi * width;
+    int wi = hw_raster % width;
     int v_hi = get_window_start(hi, height, neigh_size)+h_offset;
     int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
 
@@ -187,11 +188,12 @@ __global__ void ssna_attn_backward_kernel(
     // -- derivative indices --
     int neigh_size = (kernel_size-1)/2;
     int h_offset = attn_offset / kernel_size;
-    int w_offset = attn_offset -  h_offset * kernel_size;
+    // int w_offset = attn_offset -  h_offset * kernel_size;
+    int w_offset = attn_offset % kernel_size;
 
     // -- compute indices --
     int hi = hw_raster / width;
-    int wi = hw_raster - hi * width;
+    int wi = hw_raster % width;
     int v_hi = get_window_start(hi, height, neigh_size)+h_offset;
     int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
 

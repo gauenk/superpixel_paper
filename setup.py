@@ -41,6 +41,8 @@ setup(
             "lib/superpixel_paper/ssna/ssna_attn_cuda_source.cu",
             "lib/superpixel_paper/ssna/ssna_agg_cuda_source.cu",
             "lib/superpixel_paper/ssna/ssna_reweight_cuda_source.cu",
+            "lib/superpixel_paper/ssna/ssna_gather_sims_cuda_source.cu",
+            # "lib/superpixel_paper/ssna/ssna_reweight_pi_cuda_source.cu",
             "lib/superpixel_paper/sr_models/pair_wise_distance_cuda_source.cu",
             "lib/superpixel_paper/pybind.cpp",
             # 'lib/superpixel_paper/nsp/nsa_agg_cuda_source.cu',

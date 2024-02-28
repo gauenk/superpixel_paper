@@ -65,7 +65,7 @@ class SoftNeighSuperpixelAgg(nn.Module):
 
         self.attn_drop = nn.Dropout(attn_drop)
 
-        use_proj = True
+        # use_proj = True
         self.use_proj = use_proj
         if self.use_proj:
             if proj_layer is None:
@@ -95,7 +95,9 @@ class SoftNeighSuperpixelAgg(nn.Module):
             .permute(3, 0, 4, 1, 2, 5))[0]
         attn = self.attn_drop(attn)
         v = self.v_shell(v)
-
+        # v[...] = 0
+        # v[...,0] = 1
+        # print("[ssna_agg] attn.shape: ",attn.shape,v.shape)
         x = SoftNeighSuperpixelAggFunction.apply(v,attn,sims,sinds)
         # x = SoftNeighSuperpixelAggFunction.apply(v,attn)
         x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)

@@ -41,12 +41,12 @@ def main():
     # -=-=-=-=-=-=-=-=-=-=-=-
 
     train_fn_list = [
-        "exps/trte_deno/train_table.cfg",
+        # "exps/trte_deno/train_table.cfg",
         # "exps/trte_deno/train_ksize.cfg",
         # "exps/trte_deno/train_nsp.cfg",
         # "exps/trte_deno/train_snfts.cfg",
         # "exps/trte_deno/train_att_temp.cfg",
-        # "exps/trte_deno/train_att_temp_lrn.cfg",
+        "exps/trte_deno/train_att_temp_lrn.cfg",
     ]
     te_fn = "exps/trte_deno/test_shell.cfg"
     exps,uuids = [],[]
@@ -86,7 +86,7 @@ def main():
     results = results.fillna(value=-1)
     print(results[['spa_version','gen_sp_type']])
     print(results['spa_version'].unique())
-    for sigma,sig_df in results.groupby("sigma"):
+    for sigma,sig_df in results.groupby(["sigma","learn_attn_scale"]):
         print("-"*20)
         print("sigma: ",sigma)
         print("-"*20)

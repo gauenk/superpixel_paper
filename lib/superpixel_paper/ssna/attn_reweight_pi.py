@@ -11,11 +11,11 @@ import torch
 from torch.autograd import Function
 import superpixel_cuda
 
-class AttnReweight(nn.Module):
+class AttnReweightPi(nn.Module):
     """
 
     Input: QK^T
-    Output P(L_j=s)exp(QK^T)/[\sum_{j\in N(s)} P(L_j=s)exp(QK^T)]
+    Output \sum_{s}P(L_i=s) [P(L_j=s)exp(QK^T)]/(\sum_j[P(L_j=s)exp(QK^T)])
 
 
     using "log(P(L_i=s))" gives us "nan" which we could ignore, but I just
@@ -30,16 +30,8 @@ class AttnReweight(nn.Module):
 
     def forward(self, attn, sims, sinds):
         eps = 1e-10
-        c = th.max(attn,dim=-1,keepdim=True).values
+        c = attn.max().item()
         attn_rw = th.exp(attn-c)
-        # print(c.shape)
-        # print("*"*10)
-        # print(attn[0,0,0,0,:])
-        # print(attn[0,0,1,1,:])
-        # print("-"*10)
-        # print(attn_rw[0,0,0,0,:])
-        # print(attn_rw[0,0,1,1,:])
-        # exit()
         attn_rw = AttnReweightFunction.apply(attn_rw,sims,sinds)
         attn = attn_rw / (eps+th.sum(attn_rw,-1,keepdim=True))
 
@@ -72,7 +64,7 @@ class AttnReweightFunction(Function):
 
     @staticmethod
     def backward(ctx, d_attn_out):
-        d_attn_out = d_attn_out.contiguous()
+
         d_attn_in = th.zeros_like(ctx.saved_variables[1])
         d_sims = th.zeros_like(ctx.saved_variables[2])
         superpixel_cuda.ssna_reweight_backward(

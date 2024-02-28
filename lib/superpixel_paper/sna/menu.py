@@ -10,7 +10,7 @@ from einops import rearrange
 from easydict import EasyDict as edict
 
 # -- modules --
-from . import NeighborhoodSuperpixelAttention,SnaGmmSampling
+from . import SuperpixelNeighborhoodAttention,SnaGmmSampling
 # SnaGmmSampling,SnaSampling
 
 class SNA(nn.Module):
@@ -24,10 +24,10 @@ class SNA(nn.Module):
         # -- unpack superpixel info --
         if labels is None:
             sims, num_spixels, _ = self.sp_sims(x)
-            _,labels = torch.topk(sims.detach(),1,dim=-2)
-            H = x.shape[-2]
-            labels = rearrange(labels,'b 1 (h w) -> b h w',h=H)
-        return self.neigh_sp_attn(x,labels)
+            # _,labels = torch.topk(sims.detach(),1,dim=-2)
+            # H = x.shape[-2]
+            # labels = rearrange(labels,'b 1 (h w) -> b h w',h=H)
+        return self.neigh_sp_attn(x,sims)
 
 # -- loading --
 def load_sna(sna_version,dim,heads,qk_dim,gen_sp,**kwargs):
@@ -37,15 +37,18 @@ def load_sna(sna_version,dim,heads,qk_dim,gen_sp,**kwargs):
     v_layer = kwargs['v_layer'] if 'v_layer' in kwargs else None
     proj_layer = kwargs['proj_layer'] if 'proj_layer' in kwargs else None
 
-    neigh_sp_attn = NeighborhoodSuperpixelAttention(dim, heads,# qk_dim,
-                                                    cfg.kernel_size,
-                                                    qk_scale=cfg.spa_scale,
-                                                    mask_labels=cfg.mask_labels,
-                                                    use_weights=cfg.use_weights,
-                                                    use_proj=cfg.use_proj,
-                                                    qk_layer=qk_layer,v_layer=v_layer,
-                                                    proj_layer=proj_layer,
-                                                    learn_attn_scale=cfg.learn_attn_scale)
+    SNA_CLS = SuperpixelNeighborhoodAttention
+    neigh_sp_attn = SNA_CLS(dim, heads,# qk_dim,
+                            cfg.kernel_size,
+                            qk_scale=cfg.spa_scale,
+                            mask_labels=cfg.mask_labels,
+                            use_weights=cfg.use_weights,
+                            use_proj=cfg.use_proj,
+                            qk_layer=qk_layer,v_layer=v_layer,
+                            proj_layer=proj_layer,
+                            learn_attn_scale=cfg.learn_attn_scale,
+                            detach_sims=cfg.detach_sims,
+                            detach_learn_attn=cfg.detach_learn_attn)
               # normz_nsamples=cfg.spa_attn_normz_nsamples,
               # scatter_normz=cfg.spa_scatter_normz,
               # dist_type=cfg.dist_type)

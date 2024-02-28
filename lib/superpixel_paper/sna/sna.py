@@ -6,7 +6,7 @@ from einops.layers.torch import Rearrange
 
 import torch
 from torch import nn
-from torch.nn.functional import pad
+from torch.nn.functional import pad,one_hot
 from torch.nn.init import trunc_normal_
 from einops import rearrange,repeat
 
@@ -14,11 +14,13 @@ from natten.functional import natten2dav, natten2dqkrpb
 
 # from .functional import natten2dav, natten2dqkrpb
 # from natten import NeighAttnMat
+from superpixel_paper.nat.nat_spin import NeighAttnMat,NeighAttnAgg
 from .sna_attn import NeighSuperpixelAttn
 from .sna_agg import NeighSuperpixelAgg
+from superpixel_paper.ssna.attn_reweight import AttnReweight
+from superpixel_paper.ssna.ssna_gather_sims import SsnaGatherSims
 
-
-class NeighborhoodSuperpixelAttention(nn.Module):
+class SuperpixelNeighborhoodAttention(nn.Module):
     """
 
     Superpixel Neighborhood Attention
@@ -30,66 +32,97 @@ class NeighborhoodSuperpixelAttention(nn.Module):
                  attn_drop=0.0,proj_drop=0.0,mask_labels=False,
                  use_proj=True,use_weights=True,
                  qk_layer=None,v_layer=None,proj_layer=None,
-                 learn_attn_scale=False):
+                 learn_attn_scale=False,detach_sims=False,
+                 detach_learn_attn=False):
         super().__init__()
 
         # -- superpixels --
         self.mask_labels = mask_labels
+        self.detach_sims = detach_sims
 
         # -- scaling --
         self.num_heads = num_heads
         self.head_dim = dim // self.num_heads
         self.use_weights = use_weights
+        self.detach_sims = detach_sims
+        self.detach_learn_attn = detach_learn_attn
 
         # -- neighborhood attn --
         bias = False
-        self.nat_mat = NeighSuperpixelAttn(dim=dim,
-                                           kernel_size=kernel_size,
-                                           num_heads=num_heads,
-                                           qk_bias=bias,
-                                           use_weights=use_weights,
-                                           qk_layer=qk_layer,
-                                           learn_attn_scale=learn_attn_scale,
-                                           qk_scale=qk_scale)
-        self.nat_agg = NeighSuperpixelAgg(dim=dim,num_heads=num_heads,
-                                          kernel_size=kernel_size,
-                                          v_bias=bias,use_proj=use_proj,
-                                          use_weights=use_weights,
-                                          v_layer=v_layer,
-                                          proj_layer=proj_layer)
+        self.nat_attn = NeighAttnMat(dim=dim, kernel_size=kernel_size,
+                                     dilation=1, num_heads=num_heads, bias=bias,
+                                     qk_bias=bias, qk_scale=qk_scale,
+                                     learn_attn_scale=learn_attn_scale,
+                                     detach_learn_attn=detach_learn_attn)
+        self.attn_rw = AttnReweight()
+        self.nat_agg = NeighAttnAgg(dim=dim,num_heads=num_heads,
+                                    kernel_size=kernel_size,
+                                    v_bias=bias,use_proj=use_proj)
 
-    def forward(self, x, labels):
+        # -- old --
+        # self.nat_mat = NeighAttnMat(dim=dim, kernel_size=nat_ksize,
+        #                             dilation=1, num_heads=heads, bias=bias,
+        #                             qkv_bias=bias, qk_scale=qk_scale,
+        #                             learn_attn_scale=learn_attn_scale)
+        # if self.mask_labels:
+        #     self.nat_mat = NeighAttnMat(dim=dim, kernel_size=nat_ksize,
+        #                                 dilation=1, num_heads=heads, bias=bias,
+        #                                 qkv_bias=bias, qk_scale=qk_scale,
+        #                                 learn_attn_scale=learn_attn_scale)
+        # else:
+        #     self.nat_mat = NeighSuperpixelAttn(dim=dim, kernel_size=kernel_size,
+        #                                        num_heads=num_heads, qk_bias=bias,
+        #                                        use_weights=use_weights,
+        #                                        qk_layer=qk_layer,qk_scale=qk_scale,
+        #                                        learn_attn_scale=learn_attn_scale)
+        # self.nat_agg = NeighSuperpixelAgg(dim=dim,num_heads=num_heads,
+        #                                   kernel_size=kernel_size,
+        #                                   v_bias=bias,use_proj=use_proj,
+        #                                   use_weights=use_weights,
+        #                                   v_layer=v_layer,
+        #                                   proj_layer=proj_layer)
+
+    def forward(self, x, sims):
 
         # -- unpack superpixel info --
-        if self.mask_labels:
-            labels = th.zeros_like(labels)
+        if self.detach_sims:
+            sims = sims.detach()
 
         # -- reshape --
         x = x.permute(0,2,3,1) # b f h w -> b h w f
 
         # -- attn map --
-        attn = self.nat_mat(x,labels)
+        attn = self.nat_attn(x)
 
         # -- rescale attn --
-        attn = attn.softmax(-1)
+        if self.mask_labels:
+            attn = attn.softmax(-1)
+        else:
 
-        # mask = (attn < 1e-8).float().detach()
-        # attn = mask * attn + (1-mask)*1e-4
-        # print(attn[0,0,5,:20].max(-1))
-        # print(attn[0,0,32,32:64].max(-1))
-        # print(attn.shape)
-        # exit()
-        # print("a:",th.any(th.isnan(x)))
-        # print(th.any(th.isnan(attn)))
-        # exit()
+            # -- indices for access --
 
-        # print(attn.shape)
-        # exit()
+            device = sims.device
+            B,H,W,F = x.shape
+            sH,sW = sims.shape[-2:]
+            sinds = get_indices(H,W,sH,sW,device)
+
+            # -- reweight with P(L_j = s) --
+            inds = sims.view(*sims.shape[:-2],-1).argmax(-1)
+            binary = one_hot(inds).view(sims.shape).type(sims.dtype)
+            # print(sims.shape)
+            # print(sims[0,1,1])
+            # print(binary[0,1,1])
+            # exit()
+            attn = self.attn_rw(attn,binary,sinds)
+
+            # -- reweight with P(L_i = s) --
+            gather_sims = SsnaGatherSims()
+            pi = gather_sims(binary,sinds)
+            pi = rearrange(pi,'b h w ni -> b 1 ni h w 1')
+            attn = th.sum(pi * attn,2).contiguous()
 
         # -- innter product --
         x = self.nat_agg(x,attn)
-        # print("b:",th.any(th.isnan(x)))
-        # exit()
 
         # -- prepare --
         x = x.permute(0,3,1,2).clone() # b h w f -> b f h w
@@ -120,6 +153,16 @@ def unpack_local_sp(A_sp,ksize):
     # mask = mask_from_labels(labels)
 
     return sims,labels
+
+
+
+def get_indices(H,W,sH,sW,device):
+    sHW = sH*sW
+    labels = th.arange(sHW, device=device).reshape(1, 1, sH, sW).float()
+    interp = th.nn.functional.interpolate
+    labels = interp(labels, size=(H, W), mode="nearest").long()[0,0]
+    labels = th.stack([labels/sW,labels%sW],-1).long()
+    return labels
 
 
 

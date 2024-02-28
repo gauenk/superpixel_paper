@@ -49,18 +49,6 @@ def add_noise(lr,args):
     lr = lr + sigma*th.randn_like(lr)
     return lr
 
-def epoch_from_chkpt(ckpt_dir):
-    import torch
-
-    if not Path(ckpt_dir).exists():
-        return -1
-    chkpt_files = glob.glob(os.path.join(ckpt_dir, "*.ckpt"))
-    if len(chkpt_files) == 0: return -1
-    chkpt_files = sorted(chkpt_files, key=lambda x: int(x.replace('.ckpt','').split('=')[-1]))
-    chkpt = torch.load(chkpt_files[-1])
-    prev_epoch = chkpt['epoch']
-    return prev_epoch
-
 # if __name__ == '__main__':
 #     print("PID: ",os.getpid())
 #     args = parser.parse_args()
@@ -109,34 +97,11 @@ def extract_defaults(_cfg):
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
-        "log_path":"output/deno/train/",
-        "resume_uuid":None,"resume_flag":True,"resume_weights_only":True,
+        "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False,
         "spatial_chunk_size":256,"spatial_chunk_overlap":0.25,
-        "gradient_clip":0.,"train_only_attn_scale":False,
-    }
+        "gradient_clip":0.}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
-
-def get_resume_ckpt(cfg):
-    resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
-    resume_epoch = -1
-    if cfg.resume_flag:
-        dir0 = Path(cfg.log_path) / "checkpoints" / resume_uuid
-        dir1 = Path(cfg.log_path) / "checkpoints" / cfg.uuid
-        epoch0 = epoch_from_chkpt(dir0)
-        epoch1 = epoch_from_chkpt(dir1)
-        if epoch0 >= epoch1:
-            resume = dir0
-            resume_epoch = epoch0
-        else:
-            resume = dir1
-            resume_epoch = epoch1
-    else:
-        resume = None
-        resume_epoch = -1
-    if (not(resume is None) and not(resume.exists())) or (resume_epoch < 0):
-        resume = None
-    return resume
 
 def run(cfg):
 
@@ -144,12 +109,17 @@ def run(cfg):
     cfg = extract_defaults(cfg)
     config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
+    resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
+    if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoints" / resume_uuid
+    else: cfg.resume = None
+    if not cfg.resume.exists():
+        cfg.resume = None
 
     ## set visibel gpu
-    # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
-    # print("gpu_ids_str: ",gpu_ids_str)
-    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
+    print("gpu_ids_str: ",gpu_ids_str)
+    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
     seed_everything(cfg.seed)
 
     from dev_basics import net_chunks
@@ -160,11 +130,6 @@ def run(cfg):
     import torch.nn.functional as F
     from torch.optim.lr_scheduler import MultiStepLR, StepLR
     from superpixel_paper.sr_datas.utils import create_datasets
-    from superpixel_paper.models.utils import set_train_mode
-    from superpixel_paper.models.utils import train_only_learn_attn_scale
-
-    # -- resume --
-    cfg.resume = get_resume_ckpt(cfg)
 
     ## select active gpu devices
     device = None
@@ -197,50 +162,51 @@ def run(cfg):
     print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
     model = nn.DataParallel(model).to(device)
 
+
     ## definition of loss and optimizer
     loss_func = nn.L1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    # cfg.decays = [27,] + cfg.decays
     scheduler = MultiStepLR(optimizer, milestones=cfg.decays, gamma=cfg.gamma)
-    # set_train_mode(model,False,False)
-    # set_train_mode(model,True,False)
-
 
     ## resume training
     start_epoch = 1
     if cfg.resume is not None:
+        # print(cfg.resume)
         chkpt_files = glob.glob(os.path.join(cfg.resume, "*.ckpt"))
+        # print(chkpt_files)
         if len(chkpt_files) != 0:
             chkpt_files = sorted(chkpt_files, key=lambda x: int(x.replace('.ckpt','').split('=')[-1]))
+            print("Resuming from ",chkpt_files[-1])
+            chkpt = torch.load(chkpt_files[-1])
+            prev_epoch = chkpt['epoch']
+            start_epoch = prev_epoch + 1
+            model.load_state_dict(chkpt['model_state_dict'])
+            optimizer.load_state_dict(chkpt['optimizer_state_dict'])
+            scheduler.load_state_dict(chkpt['scheduler_state_dict'])
+            stat_dict = chkpt['stat_dict']
+            ## reset folder and param
+            # experiment_path = cfg.resume
             experiment_name = cfg.uuid
             logging_path = os.path.join(cfg.log_path, 'logs', experiment_name)
             chkpt_path = os.path.join(cfg.log_path, 'checkpoints', experiment_name)
             log_name = os.path.join(logging_path,'log.txt')
-            chkpt = torch.load(chkpt_files[-1])
-            prev_epoch = 0 if cfg.resume_weights_only else chkpt['epoch']
-            start_epoch = prev_epoch + 1
-            model.load_state_dict(chkpt['model_state_dict'])
-            if not(cfg.resume_weights_only):
-                optimizer.load_state_dict(chkpt['optimizer_state_dict'])
-                stat_dict = chkpt['stat_dict']
-            else:
-                stat_dict = utils.get_stat_dict()
-            print("Resuming from ",chkpt_files[-1])
-            print('select {}, resume training from epoch {}.'\
-                  .format(chkpt_files[-1], start_epoch))
-        else:
-            print("error.")
-            exit()
+            print('select {}, resume training from epoch {}.'.format(chkpt_files[-1], start_epoch))
+            # if not os.path.exists(logging_path): os.makedirs(logging_path)
+            # if not os.path.exists(chkpt_path): os.makedirs(chkpt_path)
     else:
         ## auto-generate the output logname
         experiment_name = cfg.uuid
         timestamp = utils.cur_timestamp_str()
+        # if cfg.log_name is None:
+        #     experiment_name = '{}-{}-{}-x{}-{}'.format(cfg.exp_name, cfg.model, 'fp32', cfg.upscale, timestamp)
+        # else:
+        #     experiment_name = '{}-{}'.format(cfg.log_name, timestamp)
+        # experiment_path = os.path.join(cfg.log_path, experiment_name)
         logging_path = os.path.join(cfg.log_path, 'logs', experiment_name)
         chkpt_path = os.path.join(cfg.log_path, 'checkpoints', experiment_name)
         log_name = os.path.join(logging_path,'log.txt')
         stat_dict = utils.get_stat_dict()
         ## create folder for chkpt and stat
-    # exit()
 
     # -- init log --
     if not os.path.exists(logging_path): os.makedirs(logging_path)
@@ -254,20 +220,13 @@ def run(cfg):
     with open(exp_params_name, 'w') as exp_params_file:
         yaml.dump(exp_params, exp_params_file, default_flow_style=False)
 
+
     ## print architecture of model
     time.sleep(3) # sleep 3 seconds
     sys.stdout = utils.ExperimentLogger(log_name, sys.stdout)
     print(model)
     # exit()
     sys.stdout.flush()
-
-    if cfg.train_only_attn_scale:
-        print("training only attention scale.")
-        train_only_learn_attn_scale(model)
-        # for name,param in model.named_parameters():
-        #     if param.requires_grad:
-        #         print(name)
-        # exit()
 
     # -- chunking for validation --
     chunk_cfg = edict()
@@ -285,15 +244,6 @@ def run(cfg):
         opt_lr = scheduler.get_last_lr()
         print('##==========={}-training, Epoch: {}, lr: {} =============##'.format('fp32', epoch, opt_lr))
         th.manual_seed(int(cfg.seed)+epoch)
-        # if epoch >= 100:
-        #     if epoch == 100: print("swap on.")
-        #     set_train_mode(model,(epoch%10)<5,(epoch%10)>=5)
-        # elif (epoch >= 50) and (epoch < 100):
-        #     if (epoch == 50): print("only lambda_at.")
-        #     set_train_mode(model,True,False)
-        # else:
-        #     if (epoch == 1): print("only sims")
-        #     set_train_mode(model,False,True)
         for iter, batch in enumerate(train_dataloader):
             optimizer.zero_grad()
             lr, hr = batch
@@ -314,7 +264,7 @@ def run(cfg):
             # exit()
             optimizer.step()
             epoch_loss += float(loss)
-            if (cfg.batch_size*(iter + 1)) % cfg.log_every == 0:
+            if (iter + 1) % cfg.log_every == 0:
                 cur_steps = (iter + 1) * cfg.batch_size
                 total_steps = len(train_dataloader.dataset)
                 fill_width = math.ceil(math.log10(total_steps))

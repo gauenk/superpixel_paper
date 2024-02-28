@@ -115,3 +115,40 @@ def get_pwd(pixel_features,stoken_size,M,affinity_softmax):
         num_spixels_width, num_spixels_height)
     affinity_matrix = (-affinity_softmax*dist_matrix).softmax(1)
     return affinity_matrix
+
+
+def train_only_scale(model):
+    for name,block in model.named_children():
+        if not("block" in name): continue
+        block.detach_sims = False
+        block.nat_attn.detach_learn_attn = False
+
+def train_only_learn_attn_scale(model,train_remaining=False):
+    for param in model.parameters():
+        param.requires_grad = train_remaining
+    for block_id,block in model.module.blocks.named_children():
+        if not(isinstance(block.nat_layer[1],nn.Identity)):
+            module = block.nat_layer[1].attn_scale_net
+            for param in module.parameters():
+                param.requires_grad = True
+        elif not(isinstance(block.sna_layer[1],nn.Identity)):
+            module = block.snat_layer[1].neigh_sp_attn.nat_attn.attn_scale_net
+            for param in module.parameters():
+                param.requires_grad = True
+        elif not(isinstance(block.ssna_layer[1],nn.Identity)):
+            module = block.ssna_layer[1].neigh_sp_attn.nat_attn.attn_scale_net
+            for param in module.parameters():
+                param.requires_grad = True
+
+def set_train_mode(model,detach_sims,detach_attn):
+
+    for block_id,block in model.module.blocks.named_children():
+        if not(isinstance(block.nat_layer[1],nn.Identity)):
+            block.nat_layer[1].detach_learn_attn = detach_attn
+        elif not(isinstance(block.sna_layer[1],nn.Identity)):
+            block.sna_layer[1].neigh_sp_attn.detach_sims = detach_sims
+            block.sna_layer[1].neigh_sp_attn.nat_attn.detach_learn_attn = detach_attn
+        elif not(isinstance(block.ssna_layer[1],nn.Identity)):
+            block.ssna_layer[1].neigh_sp_attn.detach_sims = detach_sims
+            block.ssna_layer[1].neigh_sp_attn.nat_attn.detach_learn_attn = detach_attn
+

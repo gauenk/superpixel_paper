@@ -18,34 +18,10 @@
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
 
-// inline __host__ __device__ int get_window_start(
-//     const int index,
-//     const int length,
-//     const int KERNEL_SIZE,
-//     const int NEIGHBORHOOD_SIZE) {
-//   int dilation = 1;
-//   if (dilation <= 1)
-//     return max(index - NEIGHBORHOOD_SIZE, 0) +
-//         (index + NEIGHBORHOOD_SIZE >= length) *
-//         (length - index - NEIGHBORHOOD_SIZE - 1);
-//   int ni = index - NEIGHBORHOOD_SIZE * dilation;
-//   if (ni < 0)
-//     return index % dilation;
-//   if (index + NEIGHBORHOOD_SIZE * dilation >= length) {
-//     const int imodd = index % dilation;
-//     const int a = int(length / dilation) * dilation;
-//     const int b = length - a;
-//     if (imodd < b)
-//       return length - b + imodd - 2 * NEIGHBORHOOD_SIZE * dilation;
-//     return a + imodd - KERNEL_SIZE * dilation;
-//   }
-//   return ni;
-// }
-
 inline __host__ __device__
 int get_window_start(const int index, const int length, const int neigh_size){
   int new_index = max(index - neigh_size,0);
-  new_index += ((index+neigh_size)>=length) * (length - index - neigh_size - 1);
+  new_index += (index+neigh_size>=length) * (length - index - neigh_size - 1);
   return new_index;
 }
 
@@ -57,12 +33,12 @@ void check_valid(bool& valid, const int hi, const int wi, const int H, const int
 
 
 template <typename scalar_t>
-__global__ void ssna_reweight_forward_kernel(
+__global__ void ssna_reweight_pi_forward_kernel(
     torch::PackedTensorAccessor32<scalar_t,6,torch::RestrictPtrTraits> attn_out,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn_in,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> sims,
     const torch::PackedTensorAccessor32<long,3,torch::RestrictPtrTraits> sinds,
-    int kernel_size, int NUM_PER_THREAD){
+    int kernel_size){
 
     // -- unpack --
     int nbatch = attn_in.size(0);
@@ -76,48 +52,40 @@ __global__ void ssna_reweight_forward_kernel(
 
     // -- compute indices -- 
     int ibatch = blockIdx.z / nheads;
-    // int ihead = blockIdx.z - ibatch * nheads;
-    int ihead = blockIdx.z % nheads;
+    int ihead = blockIdx.z - ibatch * nheads;
     int hw_raster = blockIdx.x * blockDim.x + threadIdx.x;
-    int attn_offset_s = NUM_PER_THREAD*(blockIdx.y * blockDim.y + threadIdx.y);
-    int si = threadIdx.z;
+    int attn_offset = blockIdx.y * blockDim.y + threadIdx.y;
 
     // -- boundary --
     if (hw_raster >= num_pix){ return; }
-    // if (attn_offset >= ksize_sq){ return; }
+    if (attn_offset >= ksize_sq){ return; }
+
+    // -- derivative indices --
+    int neigh_size = (kernel_size-1)/2;
+    int h_offset = attn_offset / kernel_size;
+    int w_offset = attn_offset -  h_offset * kernel_size;
 
     // -- compute indices --
     int hi = hw_raster / width;
-    int wi = hw_raster % width;
-    int neigh_size = (kernel_size-1)/2;
+    int wi = hw_raster - hi * width;
 
-    // -- read sims P(L_j = s) --
-    int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
-    int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
+    // -- read sims; P(L_i = s) --
+    int s_hi = sinds[hi][wi][0];
+    int s_wi = sinds[hi][wi][1];
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
-    int h_start = get_window_start(hi, height, neigh_size);
-    int w_start = get_window_start(wi, width, neigh_size);
-    // scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : 0;
+    assert(valid == true);
+    scalar_t sim_prob = sims[ibatch][hi][wi][s_hi][s_wi];
 
     // -- accumulate --
-    for (int _idx=0; _idx < NUM_PER_THREAD; _idx++){
-
-      // -- derivative indices --
-      int attn_offset = attn_offset_s + _idx;
-      if (attn_offset >= ksize_sq){ return; }
-      int h_offset = attn_offset / kernel_size;
-      int w_offset = attn_offset % kernel_size;
-      int v_hi = h_start+h_offset;
-      int v_wi = w_start+w_offset;
-      scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : 0;
-
-      scalar_t attn_val = attn_in[ibatch][ihead][hi][wi][attn_offset];
+    scalar_t attn_val = attn_in[ibatch][ihead][hi][wi][attn_offset];
+    for (int si=0; si<9; si++){
       atomicAdd(&(attn_out[ibatch][ihead][si][hi][wi][attn_offset]),sim_prob*attn_val);
     }
+
 }
 
-void ssna_reweight_forward_cuda(torch::Tensor attn_out,
+void ssna_reweight_pi_forward_cuda(torch::Tensor attn_out,
                                 const torch::Tensor attn_in,
                                 const torch::Tensor sims,
                                 const torch::Tensor sinds){
@@ -137,22 +105,21 @@ void ssna_reweight_forward_cuda(torch::Tensor attn_out,
     int kernel_size = std::sqrt(ksize_sq);
     int num_pix = height*width;
     int nsuperpixels = 9;
-    int NUM_PER_THREAD = 4;
 
     // -- block --
-    int nthreads_pix = 14;
-    int nthreads_ksize = 8;
+    int nthreads_pix = 64;
+    int nthreads_ksize = 16;
     int nblocks_pix = (num_pix-1)/nthreads_pix+1;
-    int nblocks_ksize = (ksize_sq-1)/(NUM_PER_THREAD*nthreads_ksize)+1;
-    dim3 nthreads(nthreads_pix,nthreads_ksize,nsuperpixels);
+    int nblocks_ksize = (ksize_sq-1)/nthreads_ksize+1;
+    dim3 nthreads(nthreads_pix,nthreads_ksize);
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(attn_in.type(), "forward_kernel", ([&] {
-        ssna_reweight_forward_kernel<scalar_t><<< nblock, nthreads >>>(
+        ssna_reweight_pi_forward_kernel<scalar_t><<< nblock, nthreads >>>(
             attn_out.packed_accessor32<scalar_t,6,torch::RestrictPtrTraits>(),
             attn_in.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             sims.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             sinds.packed_accessor32<long,3,torch::RestrictPtrTraits>(),
-            kernel_size,NUM_PER_THREAD);
+            kernel_size);
         }));
 }
 
@@ -167,7 +134,7 @@ void ssna_reweight_forward_cuda(torch::Tensor attn_out,
  ***********************************************/
 
 template <typename scalar_t>
-__global__ void ssna_reweight_backward_kernel(
+__global__ void ssna_reweight_pi_backward_kernel(
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_attn_in,
     torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> d_sims,
     const torch::PackedTensorAccessor32<scalar_t,6,torch::RestrictPtrTraits> d_attn_out,
@@ -175,7 +142,7 @@ __global__ void ssna_reweight_backward_kernel(
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> attn_in,
     const torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> sims,
     const torch::PackedTensorAccessor32<long,3,torch::RestrictPtrTraits> sinds,
-    int kernel_size, int NUM_PER_THREAD){
+    int kernel_size){
 
     // -- unpack --
     int nbatch = d_attn_in.size(0);
@@ -191,54 +158,43 @@ __global__ void ssna_reweight_backward_kernel(
     int ibatch = blockIdx.z / nheads;
     int ihead = blockIdx.z - ibatch * nheads;
     int hw_raster = blockIdx.x * blockDim.x + threadIdx.x;
-    // int attn_offset = blockIdx.y * blockDim.y + threadIdx.y;
-    int attn_offset_s = NUM_PER_THREAD*(blockIdx.y * blockDim.y + threadIdx.y);
-    int si = threadIdx.z;
+    int attn_offset = blockIdx.y * blockDim.y + threadIdx.y;
 
     // -- boundary --
     if (hw_raster >= num_pix){ return; }
+    if (attn_offset >= ksize_sq){ return; }
 
     // -- derivative indices --
     int neigh_size = (kernel_size-1)/2;
+    int h_offset = attn_offset / kernel_size;
+    int w_offset = attn_offset -  h_offset * kernel_size;
 
     // -- compute indices --
     int hi = hw_raster / width;
     int wi = hw_raster - hi * width;
+    int v_hi = get_window_start(hi, height, neigh_size)+h_offset;
+    int v_wi = get_window_start(wi, width, neigh_size)+w_offset;
+
+
+    // -- read sims --
     int s_hi = sinds[hi][wi][0]+(si / 3 - 1);
     int s_wi = sinds[hi][wi][1]+(si % 3 - 1);
     bool valid = true;
     check_valid(valid,s_hi,s_wi,sH,sW);
-    int h_start = get_window_start(hi, height, neigh_size);
-    int w_start = get_window_start(wi, width, neigh_size);
+    scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : 0;
 
-    // -- accumulate --
-    for (int _idx=0; _idx < NUM_PER_THREAD; _idx++){
+    // -- derivatives ("l,i" = pixel index ,"f" = feature index, "j" = attn map index) --
+    scalar_t attn_val = attn_in[ibatch][ihead][hi][wi][attn_offset];
+    scalar_t d_attn_val = d_attn_out[ibatch][ihead][si][hi][wi][attn_offset];
 
-      // -- indices --
-      int attn_offset = attn_offset_s + _idx;
-      if (attn_offset >= ksize_sq){ return; }
-      int h_offset = attn_offset / kernel_size;
-      int w_offset = attn_offset % kernel_size;
-      int v_hi = h_start+h_offset;
-      int v_wi = w_start+w_offset;
-
-      // -- read sims --
-      scalar_t sim_prob = valid ? sims[ibatch][v_hi][v_wi][s_hi][s_wi] : 0;
-
-      // -- derivatives ("l,i" = pixel idx ,"f" = feature idx, "j" = attn map idx) --
-      scalar_t attn_val = attn_in[ibatch][ihead][hi][wi][attn_offset];
-      scalar_t d_attn_val = d_attn_out[ibatch][ihead][si][hi][wi][attn_offset];
-
-      // -- derivatives --
-      if (valid){
-        atomicAdd(&(d_sims[ibatch][v_hi][v_wi][s_hi][s_wi]),d_attn_val*attn_val);
-        atomicAdd(&(d_attn_in[ibatch][ihead][hi][wi][attn_offset]),d_attn_val*sim_prob);
-      }
-
+    // -- derivatives --
+    if (valid){
+      atomicAdd(&(d_sims[ibatch][v_hi][v_wi][s_hi][s_wi]),d_attn_val*attn_val);
+      atomicAdd(&(d_attn_in[ibatch][ihead][hi][wi][attn_offset]),d_attn_val*sim_prob);
     }
 }
 
-void ssna_reweight_backward_cuda(torch::Tensor d_attn_in,
+void ssna_reweight_pi_backward_cuda(torch::Tensor d_attn_in,
                                  torch::Tensor d_sims,
                                  const torch::Tensor d_attn_out,
                                  const torch::Tensor attn_out,
@@ -264,17 +220,16 @@ void ssna_reweight_backward_cuda(torch::Tensor d_attn_in,
     int kernel_size = std::sqrt(ksize_sq);
     int num_pix = height*width;
     int nsuperpixels = 9;
-    int NUM_PER_THREAD = 4;
 
     // -- block --
     int nthreads_pix = 12;
     int nthreads_ksize = 8;
     int nblocks_pix = (num_pix-1)/nthreads_pix+1;
-    int nblocks_ksize = (ksize_sq-1)/(NUM_PER_THREAD*nthreads_ksize)+1;
+    int nblocks_ksize = (ksize_sq-1)/nthreads_ksize+1;
     dim3 nthreads(nthreads_pix,nthreads_ksize,nsuperpixels);
     dim3 nblock(nblocks_pix,nblocks_ksize,nbatch*nheads);
     AT_DISPATCH_FLOATING_TYPES(d_attn_in.type(), "backward_kernel", ([&] {
-        ssna_reweight_backward_kernel<scalar_t><<< nblock, nthreads >>>(
+        ssna_reweight_pi_backward_kernel<scalar_t><<< nblock, nthreads >>>(
             d_attn_in.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             d_sims.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             d_attn_out.packed_accessor32<scalar_t,6,torch::RestrictPtrTraits>(),
@@ -282,15 +237,15 @@ void ssna_reweight_backward_cuda(torch::Tensor d_attn_in,
             attn_in.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             sims.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
             sinds.packed_accessor32<long,3,torch::RestrictPtrTraits>(),
-            kernel_size,NUM_PER_THREAD);
+            kernel_size);
         }));
 
 }
 
 
-void init_ssna_reweight(py::module &m){
-  m.def("ssna_reweight_forward", &ssna_reweight_forward_cuda,
+void init_ssna_reweight_pi(py::module &m){
+  m.def("ssna_reweight_pi_forward", &ssna_reweight_pi_forward_cuda,
         "neighborhood superpixel atten forward");
-  m.def("ssna_reweight_backward", &ssna_reweight_backward_cuda,
+  m.def("ssna_reweight_pi_backward", &ssna_reweight_pi_backward_cuda,
         "neighborhood superpixel atten backward");
 }

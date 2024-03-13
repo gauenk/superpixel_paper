@@ -1,7 +1,8 @@
 import math
 import torch as th
 import argparse, yaml
-import spin.utils as utils
+# import spin.utils as utils
+from superpixel_paper.utils import spin_utils as utils
 import os
 from tqdm import tqdm
 import logging
@@ -48,7 +49,8 @@ if __name__ == '__main__':
     import torch.nn as nn
     import torch.nn.functional as F
     from torch.optim.lr_scheduler import MultiStepLR, StepLR
-    from spin.datas.utils import create_datasets
+    # from spin.datas.utils import create_datasets
+    from superpixel_paper.sr_datas.utils import create_datasets
 
     # -- chunking for validation --
     chunk_cfg = edict()
@@ -73,7 +75,7 @@ if __name__ == '__main__':
 
     ## definitions of model
     try:
-        model = utils.import_module('spin.models.{}'.format(args.model)).create_model(args)
+        model = utils.import_module('superpixel_paper.spin.models.{}'.format(args.model)).create_model(args)
     except Exception:
         raise ValueError('not supported model type! or something')
     model = nn.DataParallel(model).to(device)

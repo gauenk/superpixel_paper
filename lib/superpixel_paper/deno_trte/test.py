@@ -1,7 +1,8 @@
 import torch as th
 import math
 import argparse, yaml
-import spin.utils as utils
+# import spin.utils as utils
+from superpixel_paper.utils import spin_utils as utils
 import os
 from tqdm import tqdm
 import logging

@@ -1,5 +1,8 @@
 
-def config_via_spa(cfg):
+def config_via_spa(cfg,verbose=True):
+    def vprint(*args,**kwargs):
+        if verbose: print(*args,**kwargs)
+
     spa = cfg.spa_version
     if spa == "slic_mle":
         pairs = {"spa_attn_normz":"mle",
@@ -9,7 +12,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa in ["nsa_mle","sna"]:
@@ -18,12 +21,13 @@ def config_via_spa(cfg):
                  "spa_oweight":False,
                  "spa_scatter_normz":None,
                  "spa_sim_method":"slic",
+                 "gen_sp_use_grad":"detach_x",
                  "use_sna":True,
                  "use_nsp":True,
                  "use_spa":False}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "nsa_mle_s":
@@ -40,7 +44,7 @@ def config_via_spa(cfg):
                  "use_spa":False}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_s":
@@ -53,7 +57,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_km":
@@ -65,7 +69,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_km: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_km: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_ks":
@@ -77,7 +81,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_biased": # replace attn normalization with standard softmax
@@ -88,7 +92,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_biased_v": # replace attn normalization with standard softmax
@@ -99,7 +103,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "slic_biased_c": # replace attn normalization with standard softmax
@@ -110,7 +114,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"slic"}
         for key,val in pairs.items():
             if key in cfg:
-                print("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("slic_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "ssna":
@@ -122,7 +126,7 @@ def config_via_spa(cfg):
                  "gen_sp_type":"reshape"}
         for key,val in pairs.items():
             if key in cfg:
-                print(": not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint(": not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "bass_mle":
@@ -133,7 +137,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"bass"}
         for key,val in pairs.items():
             if key in cfg:
-                print("bass_mle: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("bass_mle: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "bass_s":
@@ -146,7 +150,7 @@ def config_via_spa(cfg):
                  "spa_sim_method":"bass"}
         for key,val in pairs.items():
             if key in cfg:
-                print("bass_s: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("bass_s: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "aspa":
@@ -156,7 +160,7 @@ def config_via_spa(cfg):
                  "spa_scatter_normz":"ones"}
         for key,val in pairs.items():
             if key in cfg:
-                print("aspa: not setting %s:%s" %(str(key),str(cfg[key])))
+                vprint("aspa: not setting %s:%s" %(str(key),str(cfg[key])))
                 continue
             cfg[key] = val
     elif spa == "nat":

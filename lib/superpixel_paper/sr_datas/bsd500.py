@@ -34,8 +34,8 @@ def crop_patch(lr, hr, patch_size, upscale, augment=True):
 
 class BSD500(data.Dataset):
     def __init__(
-        self, HR_folder, LR_folder, CACHE_folder,
-        train=True, augment=True, upscale=2, colors=1,
+            self, HR_folder, LR_folder, CACHE_folder,
+            train=True, augment=True, upscale=2, colors=1,
             patch_size=96, repeat=168, img_postfix=".png"
     ):
         super(BSD500, self).__init__()
@@ -113,7 +113,8 @@ class BSD500(data.Dataset):
                 self.hr_npy_names.append(hr_npy_name)
                 np.save(hr_npy_name, hr_image)
         else:
-            print("hr npy datas have already been prepared!, hr: {}".format(len(self.hr_npy_names)))
+            pass
+            #print("hr npy datas have already been prepared!, hr: {}".format(len(self.hr_npy_names)))
         ## prepare lr images
         if len(glob.glob(os.path.join(lr_dir, "*.npy"))) != len(self.lr_filenames):
             for i in range(LEN):
@@ -127,7 +128,8 @@ class BSD500(data.Dataset):
                 self.lr_npy_names.append(lr_npy_name)
                 np.save(lr_npy_name, lr_image)
         else:
-            print("lr npy datas have already been prepared!, lr: {}".format(len(self.lr_npy_names)))
+            pass
+            #print("lr npy datas have already been prepared!, lr: {}".format(len(self.lr_npy_names)))
 
     def __len__(self):
         if self.train:

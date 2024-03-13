@@ -33,6 +33,7 @@ def seed_everything(seed: int):
     import random, os
     import numpy as np
     import torch
+    # torch.autograd.set_detect_anomaly(True)
 
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -102,20 +103,34 @@ def extract_defaults(_cfg):
         "use_intra":True,"use_ffn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
-        "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
-        "gpu_ids":"[1]","threads":4,
-        "model":"model","model_name":"simple",
+        "patch_size":128,"data_repeat":4,"eval_sets":["Set5"],
+        "gpu_ids":"[1]","threads":4,"model_name":"simple",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
-        "upscale":2,"epochs":50,"denoise":False,
+        "upscale":1,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
         "log_path":"output/deno/train/",
-        "resume_uuid":None,"resume_flag":True,"resume_weights_only":True,
+        "resume_uuid":None,"resume_flag":True,"resume_weights_only":False,
         "spatial_chunk_size":256,"spatial_chunk_overlap":0.25,
         "gradient_clip":0.,"train_only_attn_scale":False,
+        "ssn_loss":False,"ssn_loss_lamb":0.1,"use_dataparallel":True,
+        "deno_loss_lamb":1.,"ssn_target":"seg",
     }
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
+
+def load_model(cfg):
+    try:
+        if cfg.model_name == "simple":
+            import_str = 'superpixel_paper.models.model'
+        elif cfg.model_name == "nlrn":
+            import_str = 'superpixel_paper.nlrn.model'
+        else:
+            raise ValueError("")
+        model = utils.import_module(import_str).create_model(cfg)
+    except Exception:
+        raise ValueError('not supported model type! or something')
+    return model
 
 def get_resume_ckpt(cfg):
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
@@ -143,7 +158,6 @@ def run(cfg):
     # -- fill missing with defaults --
     cfg = extract_defaults(cfg)
     config_via_spa(cfg)
-    if cfg.denoise: cfg.upscale = 1
 
     ## set visibel gpu
     # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
@@ -158,6 +172,7 @@ def run(cfg):
     import torch as th
     import torch.nn as nn
     import torch.nn.functional as F
+    from einops import rearrange
     from torch.optim.lr_scheduler import MultiStepLR, StepLR
     from superpixel_paper.sr_datas.utils import create_datasets
     from superpixel_paper.models.utils import set_train_mode
@@ -179,23 +194,25 @@ def run(cfg):
     torch.set_num_threads(cfg.threads)
 
     ## create dataset for training and validating
-    train_dataloader, valid_dataloaders = create_datasets(cfg)
+    from superpixel_paper.sr_datas.utils import get_seg_dataset
+    train_dataloader, _ = get_seg_dataset(cfg)
+    _, valid_dataloaders = create_datasets(cfg)
 
     ## definitions of model
-    try:
-        if cfg.model_name == "simple":
-            import_str = 'superpixel_paper.models.{}'.format(cfg.model)
-        elif cfg.model_name == "nlrn":
-            import_str = 'superpixel_paper.nlrn.model'
-        else:
-            raise ValueError("")
-        model = utils.import_module(import_str).create_model(cfg)
-    except Exception:
-        raise ValueError('not supported model type! or something')
+    model = load_model(cfg)
     print(model)
     num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
     print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
-    model = nn.DataParallel(model).to(device)
+    from superpixel_paper.models.sp_hooks import SsnaSuperpixelHooks
+    if cfg.use_dataparallel:
+        model = nn.DataParallel(model).to(device)
+    else:
+        model = model.to(device)
+    if cfg.ssn_loss:
+        sphooks = SsnaSuperpixelHooks(model)
+    else:
+        sphooks = None
+    # exit()
 
     ## definition of loss and optimizer
     loss_func = nn.L1Loss()
@@ -275,6 +292,15 @@ def run(cfg):
     chunk_cfg.spatial_chunk_size = cfg.spatial_chunk_size
     chunk_cfg.spatial_chunk_overlap = cfg.spatial_chunk_overlap
 
+    from superpixel_paper.ssn_trte.label_loss import SuperpixelLoss
+    loss_type = "cross" if cfg.ssn_target == "seg" else "mse"
+    sp_loss_fxn = SuperpixelLoss(loss_type)
+
+    swap_mode = False
+    # if swap_mode:
+    #     print("\n"*3)
+    #     print("Swap mode training.")
+
     ## start training
     timer_start = time.time()
     for epoch in range(start_epoch, cfg.nepochs+1):
@@ -285,6 +311,9 @@ def run(cfg):
         opt_lr = scheduler.get_last_lr()
         print('##==========={}-training, Epoch: {}, lr: {} =============##'.format('fp32', epoch, opt_lr))
         th.manual_seed(int(cfg.seed)+epoch)
+
+        #     set_train_mode(model,(epoch%10)<5,(epoch%10)>=5)
+        # if cfg.use_alt_train:
         # if epoch >= 100:
         #     if epoch == 100: print("swap on.")
         #     set_train_mode(model,(epoch%10)<5,(epoch%10)>=5)
@@ -296,15 +325,36 @@ def run(cfg):
         #     set_train_mode(model,False,True)
         for iter, batch in enumerate(train_dataloader):
             optimizer.zero_grad()
-            lr, hr = batch
-            if cfg.denoise:
-                lr = hr + cfg.sigma*th.randn_like(hr)
-            lr, hr = lr.to(device), hr.to(device)
-            # lr = add_noise(lr,args)
-            sr = model(lr)
+            img, seg = batch
+            img, seg = img.to(device), seg.to(device)
+            noisy = img + cfg.sigma*th.randn_like(img)
+
+            deno = model(noisy)
+            # print(deno.shape)
+
             eps = 1e-3
-            loss = th.sqrt(th.mean((sr-hr)**2)+eps**2)
-            # loss_func(sr, hr)
+            loss = 0
+            if cfg.deno_loss_lamb > 1e-10:
+                loss = th.sqrt(th.mean((deno-img)**2)+eps**2)
+                loss = cfg.deno_loss_lamb * loss
+            if cfg.ssn_loss and (cfg.ssn_loss_lamb > 1e-10):
+                B = noisy.shape[0]
+                HW = deno.shape[-2]*deno.shape[-1]
+                sims = sphooks.spix[0]
+                sims = sims.reshape(B,HW,-1).transpose(2,1)
+                # print("sims.shape: ",sims.shape,seg.shape)
+                if cfg.ssn_target == "seg":
+                    ssn_loss = sp_loss_fxn(seg[:,None],sims)
+                elif cfg.ssn_target == "pix":
+                    ssn_loss = sp_loss_fxn(img,sims)
+                else:
+                    raise ValueError(f"Uknown target [{cfg.ssn_target}]")
+                # print(float(ssn_loss))
+                loss = loss + cfg.ssn_loss_lamb * ssn_loss
+
+            if (swap_mode) and (epoch >= 25):
+                set_train_mode(model,(iter%10)<5,(iter%10)>=5)
+
             loss.backward()
             if cfg.gradient_clip > 0:
                 clip = cfg.gradient_clip
@@ -348,40 +398,40 @@ def run(cfg):
                 name = valid_dataloader['name']
                 loader = valid_dataloader['dataloader']
                 th.manual_seed(123)
-                for lr, hr in tqdm(loader, ncols=80):
-                    if cfg.denoise:
-                        lr = hr + cfg.sigma*th.randn_like(hr)
-                    lr, hr = lr.to(device), hr.to(device)
+
+                for img, _tmp in tqdm(loader, ncols=80):
+                    img = img.to(device)
+                    noisy = img + cfg.sigma*th.randn_like(img)
+                    # print("img.shape: ",img.shape,_tmp.shape)
                     # print(lr.shape,hr.shape)
                     # if cfg.topk > 600:
-                    if lr.shape[-1] == 228: # just a specific example
-                        lr = lr[...,:224]
-                        hr = hr[...,:cfg.upscale*224]
+                    if noisy.shape[-1] == 228: # just a specific example
+                        noisy = noisy[...,:224]
+                        img = img[...,:224]
                     torch.cuda.empty_cache()
                     # sr = forward(lr)
                     # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
                     with th.no_grad():
                         if (cfg.topk > 500) or (cfg.model_name == "nlrn"):
-                            sr = chunk_forward(lr)
+                            deno = chunk_forward(noisy)
                         else:
-                            sr = model(lr)
+                            deno = model(noisy)
                     # quantize output to [0, 255]
-                    hr = hr.clamp(0, 255)
-                    sr = sr.clamp(0, 255)
+                    img = img.clamp(0, 255)
+                    deno = deno.clamp(0, 255)
+
                     # conver to ycbcr
                     if cfg.colors == 3:
-                        hr_ycbcr = utils.rgb_to_ycbcr(hr)
-                        sr_ycbcr = utils.rgb_to_ycbcr(sr)
-                        hr = hr_ycbcr[:, 0:1, :, :]
-                        sr = sr_ycbcr[:, 0:1, :, :]
+                        img_ycbcr = utils.rgb_to_ycbcr(img)
+                        deno_ycbcr = utils.rgb_to_ycbcr(deno)
+                        img = img_ycbcr[:, 0:1, :, :]
+                        deno = deno_ycbcr[:, 0:1, :, :]
                     # crop image for evaluation
-                    hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
-                    sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+                    img = img[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
+                    deno = deno[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
                     # calculate psnr and ssim
-                    psnr = utils.calc_psnr(sr, hr)
-                    ssim = utils.calc_ssim(sr, hr)
-                    # psnr = utils.calc_psnr(sr, hr)
-                    # ssim = utils.calc_ssim(sr, hr)
+                    psnr = utils.calc_psnr(deno,img)
+                    ssim = utils.calc_ssim(deno,img)
 
                     avg_psnr += psnr
                     avg_ssim += ssim

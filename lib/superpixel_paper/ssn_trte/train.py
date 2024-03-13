@@ -90,37 +90,44 @@ def extract_defaults(_cfg):
         "use_intra":True,"use_ffn":False,"use_nat":False,"nat_ksize":9,
         "affinity_softmax":1.,"topk":100,"intra_version":"v1",
         "data_path":"./data/sr/","data_augment":False,
-        "patch_size":128,"data_repeat":1,"eval_sets":["Set5"],
+        "patch_size":128,"data_repeat":1,
         "gpu_ids":"[1]","threads":4,
         "model":"model","model_name":"simple",
         "decays":[],"gamma":0.5,"lr":0.0002,"resume":None,
         "log_name":"default_log","exp_name":"default_exp",
         "upscale":2,"epochs":50,"denoise":False,
-        "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
+        "log_every":100,"test_every":1,"batch_size":8,"colors":3,
         "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":False,
         "spatial_chunk_size":256,"spatial_chunk_overlap":0.25,
-        "gradient_clip":0.}
+        "gradient_clip":0.,"target":"seg"}
     for k in defs: cfg[k] = optional(cfg,k,defs[k])
     return cfg
+
+def load_model(cfg):
+    from superpixel_paper.ssn_trte.ssn_net import UNetSsnNet
+    model = UNetSsnNet(3,cfg.ssn_nftrs,cfg.ssn_nftrs,
+                       n_iters=cfg.gensp_niters,stoken_size=cfg.stoken_size,
+                       softmax_scale=cfg.affinity_softmax,M=cfg.M)
+    return model
 
 def run(cfg):
 
     # -- fill missing with defaults --
     cfg = extract_defaults(cfg)
-    config_via_spa(cfg)
+    # config_via_spa(cfg)
     if cfg.denoise: cfg.upscale = 1
     resume_uuid = cfg.uuid if cfg.resume_uuid is None else cfg.resume_uuid
     if cfg.resume_flag: cfg.resume = Path(cfg.log_path) / "checkpoints" / resume_uuid
     else: cfg.resume = None
-    if not cfg.resume.exists():
+    if (cfg.resume is None) or not(cfg.resume.exists()):
         cfg.resume = None
 
     ## set visibel gpu
-    gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
-    print("gpu_ids_str: ",gpu_ids_str)
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
-    os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
-    seed_everything(cfg.seed)
+    # gpu_ids_str = str(cfg.gpu_ids).replace('[','').replace(']','')
+    # print("gpu_ids_str: ",gpu_ids_str)
+    # os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '{}'.format(gpu_ids_str)
+    # seed_everything(cfg.seed)
 
     from dev_basics import net_chunks
     from easydict import EasyDict as edict
@@ -129,7 +136,7 @@ def run(cfg):
     import torch.nn as nn
     import torch.nn.functional as F
     from torch.optim.lr_scheduler import MultiStepLR, StepLR
-    from superpixel_paper.sr_datas.utils import create_datasets
+    # from superpixel_paper.sr_datas.utils import create_datasets
 
     ## select active gpu devices
     device = None
@@ -144,24 +151,17 @@ def run(cfg):
     torch.set_num_threads(cfg.threads)
 
     ## create dataset for training and validating
-    train_dataloader, valid_dataloaders = create_datasets(cfg)
+    from superpixel_paper.sr_datas.utils import get_seg_dataset
+    train_dataloader, valid_dataloaders = get_seg_dataset(cfg)
 
     ## definitions of model
-    try:
-        if cfg.model_name == "simple":
-            import_str = 'superpixel_paper.models.{}'.format(cfg.model)
-        elif cfg.model_name == "nlrn":
-            import_str = 'superpixel_paper.nlrn.model'
-        else:
-            raise ValueError("")
-        model = utils.import_module(import_str).create_model(cfg)
-    except Exception:
-        raise ValueError('not supported model type! or something')
-    print(model)
+    from superpixel_paper.ssn_trte.label_loss import SuperpixelLoss
+    loss_type = "cross" if cfg.target == "seg" else "mse"
+    loss_fxn = SuperpixelLoss(loss_type)
+    model = load_model(cfg)
     num_parameters = sum(map(lambda x: x.numel(), model.parameters()))
     print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
     model = nn.DataParallel(model).to(device)
-
 
     ## definition of loss and optimizer
     loss_func = nn.L1Loss()
@@ -175,7 +175,8 @@ def run(cfg):
         chkpt_files = glob.glob(os.path.join(cfg.resume, "*.ckpt"))
         # print(chkpt_files)
         if len(chkpt_files) != 0:
-            chkpt_files = sorted(chkpt_files, key=lambda x: int(x.replace('.ckpt','').split('=')[-1]))
+            chkpt_files = sorted(chkpt_files, key=lambda x:\
+                                 int(x.replace('.ckpt','').split('=')[-1]))
             print("Resuming from ",chkpt_files[-1])
             chkpt = torch.load(chkpt_files[-1])
             prev_epoch = chkpt['epoch']
@@ -246,15 +247,15 @@ def run(cfg):
         th.manual_seed(int(cfg.seed)+epoch)
         for iter, batch in enumerate(train_dataloader):
             optimizer.zero_grad()
-            lr, hr = batch
-            if cfg.denoise:
-                lr = hr + cfg.sigma*th.randn_like(hr)
-            lr, hr = lr.to(device), hr.to(device)
-            # lr = add_noise(lr,args)
-            sr = model(lr)
-            eps = 1e-3
-            loss = th.sqrt(th.mean((sr-hr)**2)+eps**2)
-            # loss_func(sr, hr)
+            img, seg = batch
+            img, seg = img.to(device)/255., seg.to(device)
+            sims = model(img)
+            if cfg.target == "seg":
+                loss = loss_fxn(seg[:,None],sims)
+            elif cfg.target == "pix":
+                loss = loss_fxn(img,sims)
+            else:
+                raise ValueError(f"Uknown target [{cfg.target}]")
             loss.backward()
             if cfg.gradient_clip > 0:
                 clip = cfg.gradient_clip
@@ -279,84 +280,56 @@ def run(cfg):
                 timer_end = time.time()
                 duration = timer_end - timer_start
                 timer_start = timer_end
-                print('Epoch:{}, {}/{}, loss: {:.4f}, time: {:.3f}'.format(cur_epoch, cur_steps, total_steps, avg_loss, duration))
+                print('Epoch:{}, {}/{}, loss: {:.4f}, time: {:.3f}'.\
+                      format(cur_epoch, cur_steps, total_steps, avg_loss, duration))
             # break
 
-        # import pdb; pdb.set_trace()
-        if epoch % cfg.test_every == 0:
-            torch.cuda.empty_cache()
-            torch.set_grad_enabled(False)
-            test_log = ''
-            model = model.eval()
-            for valid_dataloader in valid_dataloaders:
-                fwd_fxn = lambda vid: model(vid[:,0])[:,None]
-                fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
-                def chunk_forward(lr):
-                    sr = fwd_fxn(lr[:,None])[:,0]
-                    return sr
-                avg_psnr, avg_ssim = 0.0, 0.0
-                name = valid_dataloader['name']
-                loader = valid_dataloader['dataloader']
-                th.manual_seed(123)
-                for lr, hr in tqdm(loader, ncols=80):
-                    if cfg.denoise:
-                        lr = hr + cfg.sigma*th.randn_like(hr)
-                    lr, hr = lr.to(device), hr.to(device)
-                    # print(lr.shape,hr.shape)
-                    # if cfg.topk > 600:
-                    if lr.shape[-1] == 228: # just a specific example
-                        lr = lr[...,:224]
-                        hr = hr[...,:cfg.upscale*224]
-                    torch.cuda.empty_cache()
-                    # sr = forward(lr)
-                    # print("lr.shape,hr.shape: ",lr.shape,hr.shape)
-                    with th.no_grad():
-                        if (cfg.topk > 500) or (cfg.model_name == "nlrn"):
-                            sr = chunk_forward(lr)
-                        else:
-                            sr = model(lr)
-                    # quantize output to [0, 255]
-                    hr = hr.clamp(0, 255)
-                    sr = sr.clamp(0, 255)
-                    # conver to ycbcr
-                    if cfg.colors == 3:
-                        hr_ycbcr = utils.rgb_to_ycbcr(hr)
-                        sr_ycbcr = utils.rgb_to_ycbcr(sr)
-                        hr = hr_ycbcr[:, 0:1, :, :]
-                        sr = sr_ycbcr[:, 0:1, :, :]
-                    # crop image for evaluation
-                    hr = hr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
-                    sr = sr[:, :, cfg.upscale:-cfg.upscale, cfg.upscale:-cfg.upscale]
-                    # calculate psnr and ssim
-                    psnr = utils.calc_psnr(sr, hr)
-                    ssim = utils.calc_ssim(sr, hr)
-                    # psnr = utils.calc_psnr(sr, hr)
-                    # ssim = utils.calc_ssim(sr, hr)
+        # # import pdb; pdb.set_trace()
+        # if epoch % cfg.test_every == 0:
+        #     torch.cuda.empty_cache()
+        #     torch.set_grad_enabled(False)
+        #     test_log = ''
+        #     model = model.eval()
+        #     for valid_dataloader in valid_dataloaders:
+        #         fwd_fxn = lambda vid: model(vid[:,0])[:,None]
+        #         fwd_fxn = net_chunks.chunk(chunk_cfg,fwd_fxn)
+        #         def chunk_forward(lr):
+        #             sr = fwd_fxn(lr[:,None])[:,0]
+        #             return sr
+        #         avg_psnr, avg_ssim = 0.0, 0.0
+        #         name = valid_dataloader['name']
+        #         loader = valid_dataloader['dataloader']
+        #         th.manual_seed(123)
+        #         for img, seg in tqdm(loader, ncols=80):
+        #             img, seg = img.to(device), seg.to(device)
+        #             if lr.shape[-1] == 228: # just a specific example
+        #                 img,seg = img[...,:224],seg[...,:224]
+        #             torch.cuda.empty_cache()
+        #             with th.no_grad():
+        #                 if (cfg.topk > 500) or (cfg.model_name == "nlrn"):
+        #                     sims = chunk_forward(img)
+        #                 else:
+        #                     sims = model(img)
 
-                    avg_psnr += psnr
-                    avg_ssim += ssim
-                avg_psnr = round(avg_psnr/len(loader) + 5e-3, 2)
-                avg_ssim = round(avg_ssim/len(loader) + 5e-5, 4)
-                stat_dict[name]['psnrs'].append(avg_psnr)
-                stat_dict[name]['ssims'].append(avg_ssim)
-                # print(avg_psnr)
-                # exit()
+        #             # quantize output to [0, 255]
+        #             loss = loss_fxn(seg,sims)
 
-                if stat_dict[name]['best_ssim']['value'] > 0.98:
-                    stat_dict[name]['best_ssim']['value'] = avg_ssim
-                    stat_dict[name]['best_ssim']['epoch'] = epoch
 
-                if stat_dict[name]['best_psnr']['value'] < avg_psnr:
-                    stat_dict[name]['best_psnr']['value'] = avg_psnr
-                    stat_dict[name]['best_psnr']['epoch'] = epoch
-                if stat_dict[name]['best_ssim']['value'] < avg_ssim:
-                    stat_dict[name]['best_ssim']['value'] = avg_ssim
-                    stat_dict[name]['best_ssim']['epoch'] = epoch
-                test_log += '[{}-X{}], PSNR/SSIM: {:.2f}/{:.4f} \
-                (Best: {:.2f}/{:.4f}, Epoch: {}/{})\n'.format(name, cfg.upscale,\
-                    float(avg_psnr), float(avg_ssim),stat_dict[name]['best_psnr']['value'], stat_dict[name]['best_ssim']['value'],stat_dict[name]['best_psnr']['epoch'], stat_dict[name]['best_ssim']['epoch'])
+        #         # if stat_dict[name]['best_ssim']['value'] > 0.98:
+        #         #     stat_dict[name]['best_ssim']['value'] = avg_ssim
+        #         #     stat_dict[name]['best_ssim']['epoch'] = epoch
 
-            print(test_log)
+        #         # if stat_dict[name]['best_psnr']['value'] < avg_psnr:
+        #         #     stat_dict[name]['best_psnr']['value'] = avg_psnr
+        #         #     stat_dict[name]['best_psnr']['epoch'] = epoch
+        #         # if stat_dict[name]['best_ssim']['value'] < avg_ssim:
+        #         #     stat_dict[name]['best_ssim']['value'] = avg_ssim
+        #         #     stat_dict[name]['best_ssim']['epoch'] = epoch
+        #         # test_log += '[{}-X{}], PSNR/SSIM: {:.2f}/{:.4f} \
+        #         # (Best: {:.2f}/{:.4f}, Epoch: {}/{})\n'.format(name, cfg.upscale,\
+        #         #     float(avg_psnr), float(avg_ssim),stat_dict[name]['best_psnr']['value'], stat_dict[name]['best_ssim']['value'],stat_dict[name]['best_psnr']['epoch'], stat_dict[name]['best_ssim']['epoch'])
+
+            # print(test_log)
             sys.stdout.flush()
             # save model
             model_str = '%s-epoch=%02d.ckpt'%(cfg.uuid,epoch-1) # "start at 0"
@@ -383,8 +356,8 @@ def run(cfg):
     # -- return info --
     info = edict()
     # print(stat_dict)
-    for valid_dataloader in valid_dataloaders:
-        name = valid_dataloader['name']
-        info["%s_best_psnrs"%name] = stat_dict[name]['best_psnr']['value']
-        info["%s_best_ssim"%name] = stat_dict[name]['best_ssim']['value']
+    # for valid_dataloader in valid_dataloaders:
+    #     name = valid_dataloader['name']
+    #     info["%s_best_psnrs"%name] = stat_dict[name]['best_psnr']['value']
+    #     info["%s_best_ssim"%name] = stat_dict[name]['best_ssim']['value']
     return info

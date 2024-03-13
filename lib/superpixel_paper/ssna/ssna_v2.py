@@ -29,7 +29,7 @@ class SoftSuperpixelNeighborhoodAttention_v2(nn.Module):
                  attn_drop=0.0,proj_drop=0.0,mask_labels=False,
                  use_proj=True,use_weights=True,
                  qk_layer=None,v_layer=None,proj_layer=None,
-                 learn_attn_scale=False):
+                 learn_attn_scale=False,attn_rw_version="v0"):
         super().__init__()
 
         # -- superpixels --
@@ -57,7 +57,13 @@ class SoftSuperpixelNeighborhoodAttention_v2(nn.Module):
                                      dilation=1, num_heads=num_heads, bias=bias,
                                      qk_bias=bias, qk_scale=qk_scale,
                                      learn_attn_scale=learn_attn_scale)
-        self.attn_rw = AttnReweight()
+        self.attn_rw_version = attn_rw_version
+        if attn_rw_version == "v0":
+            self.attn_rw = AttnReweight()
+        elif attn_rw_version == "v1":
+            self.attn_rw = AttnReweightV2()
+        else:
+            raise KeyError(f"Uknown attention re-weight function [{attn_rw_version}]")
         self.nat_agg = SoftNeighSuperpixelAgg(dim=dim,num_heads=num_heads,
                                               kernel_size=kernel_size,
                                               v_bias=bias,use_proj=use_proj,
@@ -92,6 +98,7 @@ class SoftSuperpixelNeighborhoodAttention_v2(nn.Module):
             attn = attn[:,:,None].repeat(1,1,9,1,1,1)
         else:
             attn = self.attn_rw(attn,sims,sinds)
+            # broken; attn_rw should not include P(L_i) step if the following works
 
         # -- inner product --
         # sims = th.ones_like(sims)#/9.

@@ -45,7 +45,7 @@ class GenSP(nn.Module):
         self.gen_sp_type = gen_sp_type
         self.use_state = use_state
         self.use_pwd = use_pwd
-        self.reshape_output = gen_sp_type in ["reshape","modulated"]
+        self.reshape_output = gen_sp_type in ["reshape","modulated","default"]
 
         use_unet = self.gen_sp_type in ["unet","ssn"]
         use_lmodel = self.gen_sp_type in ["modulated"]
@@ -101,6 +101,7 @@ class GenSP(nn.Module):
             if self.use_state: state = sims
             sims = sparse_to_full(sims,self.stoken_size[0])
             # print("sims.shape: ",sims.shape)
+            # print("ssn: ",sims.shape)
             shape_str = 'b (sh sw) (h w) -> b h w sh sw'
             sims = rearrange(sims,shape_str,h=H,sh=sH)
             num_spixels = 0 # unused
@@ -132,6 +133,8 @@ class GenSP(nn.Module):
             m_params,temp_params = ssn_params[:,[0]],ssn_params[:,[1]]
             m_params = m_params.reshape((B,1,H,W))
             # print("temp_params.shape: ",temp_params.shape)
+            # print("x.shape: ",x.shape)
+            # exit()
             aff, sims, num_spixels = ssn_iter(x, self.stoken_size,
                                               self.n_iter,
                                               # self.M,
@@ -140,6 +143,8 @@ class GenSP(nn.Module):
                                               self.softmax_order,
                                               self.use_grad)
             if self.reshape_output:
+                # print(sims.shape)
+                # print("reshape.")
                 H = x.shape[-2]
                 sH = H//self.stoken_size[0]
                 shape_str = 'b (sh sw) (h w) -> b h w sh sw'
@@ -178,9 +183,17 @@ def sparse_to_full(sims,S):
     return abs_affinity
 
 
+def get_snn_pool(pixel_features, S=14):
+    # -- init centroids/inds --
+    B,F,H,W = pixel_features.shape
+    sH,sW = H//S, W//S
+    centroids,_ = calc_init_centroid(pixel_features, sW, sH)
+    centroids = centroids.reshape(B,F,sH,sW)
+    return centroids
+
 def ssn_iter(pixel_features, stoken_size=[16, 16],
              n_iter=2, M = 0., affinity_softmax=1.,
-             softmax_order="v0", use_grad=False,):
+             softmax_order="v0", use_grad=False):
     """
     computing assignment iterations
     detailed process is in Algorithm 1, line 2 - 6

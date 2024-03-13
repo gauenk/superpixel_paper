@@ -43,7 +43,8 @@ def load_ssna(nsp_version,dim,heads,qk_dim,gen_sp,**kwargs):
                              proj_layer=proj_layer,
                              learn_attn_scale=cfg.learn_attn_scale,
                              detach_sims=cfg.detach_sims,
-                             detach_learn_attn=cfg.detach_learn_attn)
+                             detach_learn_attn=cfg.detach_learn_attn,
+                             attn_rw_version=cfg.attn_rw_version)
     ssna = SSNA(gen_sp,neigh_sp_attn)
     # if cfg.spa_full_sampling:
     #     # if cfg.nsp_sim_method == "slic":

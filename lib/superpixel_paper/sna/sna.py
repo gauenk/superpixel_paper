@@ -100,26 +100,24 @@ class SuperpixelNeighborhoodAttention(nn.Module):
         else:
 
             # -- indices for access --
-
             device = sims.device
             B,H,W,F = x.shape
             sH,sW = sims.shape[-2:]
             sinds = get_indices(H,W,sH,sW,device)
 
-            # -- reweight with P(L_j = s) --
+            # -- from probs to inds --
             inds = sims.view(*sims.shape[:-2],-1).argmax(-1)
-            binary = one_hot(inds).view(sims.shape).type(sims.dtype)
-            # print(sims.shape)
-            # print(sims[0,1,1])
-            # print(binary[0,1,1])
-            # exit()
+            binary = one_hot(inds,sH*sW)
+            binary = binary.view(sims.shape).type(sims.dtype)
+
+            # -- reweight with P(L_j = s) --
             attn = self.attn_rw(attn,binary,sinds)
 
-            # -- reweight with P(L_i = s) --
-            gather_sims = SsnaGatherSims()
-            pi = gather_sims(binary,sinds)
-            pi = rearrange(pi,'b h w ni -> b 1 ni h w 1')
-            attn = th.sum(pi * attn,2).contiguous()
+            # # -- reweight with P(L_i = s) --
+            # gather_sims = SsnaGatherSims()
+            # pi = gather_sims(binary,sinds)
+            # pi = rearrange(pi,'b h w ni -> b 1 ni h w 1')
+            # attn = th.sum(pi * attn,2).contiguous()
 
         # -- innter product --
         x = self.nat_agg(x,attn)

@@ -18,7 +18,7 @@ from ..sna.sna_attn import NeighSuperpixelAttn
 from .ssna_attn import SoftNeighSuperpixelAttn
 from .ssna_agg import SoftNeighSuperpixelAgg
 from .attn_reweight import AttnReweight
-from .ssna_gather_sims import SsnaGatherSims
+from .attn_reweight_v2 import AttnReweightV2
 
 class SoftSuperpixelNeighborhoodAttention(nn.Module):
     """
@@ -31,7 +31,7 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
                  use_proj=True,use_weights=True,
                  qk_layer=None,v_layer=None,proj_layer=None,
                  learn_attn_scale=False,detach_sims=False,
-                 detach_learn_attn=False):
+                 detach_learn_attn=False,attn_rw_version="v0"):
         super().__init__()
 
         # -- superpixels --
@@ -61,7 +61,13 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
                                      qk_bias=bias, qk_scale=qk_scale,
                                      learn_attn_scale=learn_attn_scale,
                                      detach_learn_attn=detach_learn_attn)
-        self.attn_rw = AttnReweight()
+        self.attn_rw_version = attn_rw_version
+        if attn_rw_version == "v0":
+            self.attn_rw = AttnReweight()
+        elif attn_rw_version == "v1":
+            self.attn_rw = AttnReweightV2()
+        else:
+            raise KeyError(f"Uknown attention re-weight function [{attn_rw_version}]")
         assert (use_weights is True)
         self.nat_agg = NeighAttnAgg(dim=dim,num_heads=num_heads,
                                     kernel_size=kernel_size,
@@ -108,13 +114,6 @@ class SoftSuperpixelNeighborhoodAttention(nn.Module):
 
             # -- reweight with P(L_j = s) --
             attn = self.attn_rw(attn,sims,sinds)
-
-            # -- reweight with P(L_i = s) --
-            gather_sims = SsnaGatherSims()
-            pi = gather_sims(sims,sinds)
-            pi = rearrange(pi,'b h w ni -> b 1 ni h w 1')
-            # pi = pi/pi.sum(2,keepdim=True)
-            attn = th.sum(pi * attn,2).contiguous()
 
             # print("-"*10)
             # print(attn[0,0,0,0])

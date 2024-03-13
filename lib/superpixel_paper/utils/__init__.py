@@ -1,8 +1,25 @@
 
+
 import torch
 import numpy as np
 import torch as th
 from einops import rearrange,repeat
+import copy
+dcopy = copy.deepcopy
+from easydict import EasyDict as edict
+
+
+from . import metrics
+
+def extract_defaults(_cfg,defs):
+    cfg = edict(dcopy(_cfg))
+    for k in defs: cfg[k] = optional(cfg,k,defs[k])
+    return cfg
+
+def optional(pydict,key,default):
+    if pydict is None: return default
+    elif key in pydict: return pydict[key]
+    else: return default
 
 def append_grid(vid,R):
     B,T,F,H,W = vid.shape

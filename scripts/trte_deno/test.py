@@ -41,21 +41,39 @@ def main():
     # -=-=-=-=-=-=-=-=-=-=-=-
 
     train_fn_list = [
+        # "exps/trte_deno/train_dev.cfg",
         # "exps/trte_deno/train_table.cfg",
+        #
+        # "exps/trte_deno/train_att_temp_lrn.cfg",
+        # "exps/trte_deno/train_att_temp_lrn_sna.cfg",
+        # "exps/trte_deno/train_att_temp_lrn_sna-m.cfg",
+        #
+        # "exps/trte_deno/train_snfts.cfg",
+        # "exps/trte_deno/train_snfts_nat.cfg",
+        #
+        # "exps/trte_deno/train_ssn.cfg",
+        # "exps/trte_deno/train_ssn_again.cfg",
+        #
         # "exps/trte_deno/train_ksize.cfg",
-        # "exps/trte_deno/train_nsp.cfg",
+        # "exps/trte_deno/train_ksize_nat.cfg",
+        #
+        "exps/trte_deno/train_nsp.cfg",
+        #
         # "exps/trte_deno/train_snfts.cfg",
         # "exps/trte_deno/train_att_temp.cfg",
-        "exps/trte_deno/train_att_temp_lrn.cfg",
+        # "exps/trte_deno/train_bare.cfg",
     ]
     te_fn = "exps/trte_deno/test_shell.cfg"
+    # te_fn = "exps/trte_deno/test_shell_bsd68.cfg"
     exps,uuids = [],[]
     for tr_fn in train_fn_list:
         tr_exp = cache_io.fill_test_shell(tr_fn,te_fn)
         _exps = read_test(tr_exp,".cache_io_exps/trte_deno/test",
-                         reset=refresh,skip_dne=refresh)
-        _exps,_uuids = cache_io.get_uuids(_exps,".cache_io/trte_deno/test",
+                          reset=refresh,skip_dne=refresh)
+        _exps,_uuids = cache_io.get_uuids(_exps,".cache_io/trte_deno/test_v0",
                                           read=not(refresh),no_config_check=False)
+        # _exps,_uuids = cache_io.get_uuids(_exps,".cache_io/trte_deno/test",
+        #                                   read=not(refresh),no_config_check=False)
         exps += _exps
         uuids += _uuids
 
@@ -86,17 +104,33 @@ def main():
     results = results.fillna(value=-1)
     print(results[['spa_version','gen_sp_type']])
     print(results['spa_version'].unique())
-    for sigma,sig_df in results.groupby(["sigma","learn_attn_scale"]):
+    print(results.columns)
+    results = results.drop_duplicates()
+    _fields = ["sigma","learn_attn_scale","nat_ksize","stoken_size"]
+    fields = []
+    cols = list(results.columns)
+    for f in _fields:
+        if f in cols: fields.append(f)
+    for sigma,sig_df in results.groupby(fields):
         print("-"*20)
         print("sigma: ",sigma)
         print("-"*20)
         # for dname,ddf in sig_df.groupby("dname"):
         #     print("dname: ",dname)
         #     # print(ddf.columns)
-        for spa_version,spa_df in sig_df.groupby(["spa_version","gen_sp_type","nsa_mask_labels","share_gen_sp","conv_ksize","use_ffn"]):
+        _fields2 = ["spa_version","gen_sp_type","nsa_mask_labels","share_gen_sp",
+                    "conv_ksize","use_ffn","deno_loss_lamb","ssn_loss_lamb"]
+        fields2 = []
+        cols = list(sig_df.columns)
+        for f in _fields2:
+            if f in cols: fields2.append(f)
+        for spa_version,spa_df in sig_df.groupby(fields2):
             # print(spa_version)
             # print(spa_df['psnrs'])
             # exit()
+            ruuid = spa_df['pretrained_path'].unique().item()[:8]
+            # uuid = spa_df['uuid'].unique().item()[:8]
+            print(ruuid)
             print("SPA: ",spa_version,"%2.2f,%0.3f" %
                   (spa_df['psnrs'].mean(),spa_df['ssims'].mean()))
 

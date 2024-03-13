@@ -23,6 +23,7 @@ class Benchmark(data.Dataset):
         self.LR_folder = LR_folder
 
         self.img_postfix = '.png'
+        self.in_scale = scale
         scale = 2 if scale == 1 else scale
         self.scale = scale
         self.colors = colors
@@ -45,6 +46,7 @@ class Benchmark(data.Dataset):
         ## if store in ram
         self.hr_images = []
         self.lr_images = []
+        self.names = []
 
         LEN = len(self.hr_filenames)
         for i in range(LEN):
@@ -57,7 +59,8 @@ class Benchmark(data.Dataset):
             if self.colors == 1:
                 lr_image, hr_image = sc.rgb2ycbcr(lr_image)[:, :, 0:1], sc.rgb2ycbcr(hr_image)[:, :, 0:1]
             self.hr_images.append(hr_image)
-            self.lr_images.append(lr_image) 
+            self.lr_images.append(lr_image)
+            self.names.append(Path(self.hr_filenames[i]).stem)
 
     def __len__(self):
         return len(self.hr_filenames)
@@ -68,6 +71,7 @@ class Benchmark(data.Dataset):
         lr_h, lr_w, _ = lr.shape
         hr = hr[:lr_h*self.scale, :lr_w*self.scale, :]
         lr, hr = ndarray2tensor(lr), ndarray2tensor(hr)
+        if self.in_scale == 1: lr = hr.clone()
         return lr, hr
 
 if __name__ == '__main__':

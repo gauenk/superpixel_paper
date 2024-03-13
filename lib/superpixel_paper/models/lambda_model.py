@@ -85,7 +85,7 @@ class UNet(nn.Module):
         dec1 = torch.cat((dec1, enc1), dim=1)
         dec1 = self.decoder1(dec1)
         dec1 = self.conv(dec1)
-        dec1 = F.relu(dec1, inplace=True)
+        dec1 = F.relu(dec1, inplace=False)
         return dec1
 
     def forward_meta(self, x, vars):
@@ -154,7 +154,7 @@ class UNet(nn.Module):
                         ),
                     ),
                     (name + "norm1", nn.BatchNorm2d(num_features=features)),
-                    (name + "relu1", nn.ReLU(inplace=True)),
+                    (name + "relu1", nn.ReLU(inplace=False)),
                     (
                         name + "conv2",
                         nn.Conv2d(
@@ -167,7 +167,7 @@ class UNet(nn.Module):
                         ),
                     ),
                     (name + "norm2", nn.BatchNorm2d(num_features=features)),
-                    (name + "relu2", nn.ReLU(inplace=True)),
+                    (name + "relu2", nn.ReLU(inplace=False)),
                 ]
             )
         )

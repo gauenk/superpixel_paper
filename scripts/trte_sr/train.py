@@ -27,11 +27,30 @@ def main():
 
     # -- get experiments --
     def clear_fxn(num,cfg): return False
-    exps,uuids = cache_io.train_stages.run("exps/trte_sr/train.cfg",
-                                           ".cache_io_exps/trte_sr/train/",
-                                           update=True)
+    # exp_fn = "exps/trte_sr/train_snet.cfg"
+    # exp_fn = "exps/trte_sr/train.cfg"
+    # exp_fn_list = ["exps/trte_sr/train_table.cfg"]
+    exp_fn_list = [
+        # "exps/trte_sr/train_table.cfg",
+        "exps/trte_sr/train_att_temp_lrn.cfg",
+        # "exps/trte_sr/train_snfts.cfg",
+        # "exps/trte_sr/train_ksize.cfg",
+        # "exps/trte_sr/train_nsp.cfg",
+        # "exps/trte_sr/train_att_temp.cfg",
+        # "exps/trte_sr/train_bare.cfg",
+    ]
+    exps,uuids = [],[]
+    for exp_fn in exp_fn_list:
+        _exps,_uuids = cache_io.train_stages.run(exp_fn,
+                                                 ".cache_io_exps/trte_sr/train/",
+                                                 update=True)
+        # print(_exps[0]['batch_size'])
+        # print(_exps[0]['batch_size_tr'])
+        exps += _exps
+        uuids += _uuids
     print("Num Exps: ",len(exps))
     print(uuids)
+
     # exps = list(reversed(exps))
     # uuids = list(reversed(uuids))
     # print(exps)

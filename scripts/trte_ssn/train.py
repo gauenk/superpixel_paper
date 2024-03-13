@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 # -- testing --
-from superpixel_paper.trte import train_seg
+from superpixel_paper.ssn_trte import train
 
 # -- caching results --
 import cache_io
@@ -27,20 +27,21 @@ def main():
 
     # -- get experiments --
     def clear_fxn(num,cfg): return False
-    exps,uuids = cache_io.train_stages.run("exps/trte_nlnet/train.cfg",
-                                           ".cache_io_exps/trte_nlnet/train/",
+    fn = "exps/trte_ssn/train.cfg"
+    fn = "exps/trte_ssn/train_again.cfg"
+    exps,uuids = cache_io.train_stages.run(fn,".cache_io_exps/trte_ssn/train/",
                                            update=True)
     print("Num Exps: ",len(exps))
     print(uuids)
 
     # -- run exps --
     results = cache_io.run_exps(exps,train.run,uuids=uuids,preset_uuids=True,
-                                name=".cache_io/trte_nlnet/train",
+                                name=".cache_io/trte_ssn/train",
                                 version="v1",skip_loop=False,clear_fxn=clear_fxn,
                                 clear=False,enable_dispatch="slurm",
-                                records_fn=".cache_io_pkl/trte_nlnet/train.pkl",
-                                records_reload=False,use_wandb=True,
-                                proj_name="nlnet_train")
+                                records_fn=".cache_io_pkl/trte_ssn/train.pkl",
+                                records_reload=False,use_wandb=False,
+                                proj_name="ssn_train")
 
 
 

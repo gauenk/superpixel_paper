@@ -6,7 +6,7 @@ from einops import rearrange
 from superpixel_paper.ssna.ssna import get_indices
 from superpixel_paper.ssna.ssna_gather_sims import SsnaGatherSims
 from superpixel_paper.ssna import SoftSuperpixelNeighborhoodAttention
-from superpixel_paper.ssna.ssna_v2 import SoftSuperpixelNeighborhoodAttention_v2
+# from superpixel_paper.ssna.ssna_v2 import SoftSuperpixelNeighborhoodAttention_v2
 from superpixel_paper.models.sp_modules import sparse_to_full
 from superpixel_paper.nat.nat_spin import NeighborhoodAttention2D
 
@@ -43,7 +43,7 @@ def run_ssna_attn(ssna,img,sims):
 
 def sample_sims(B,H,W,sH,sW,S,device):
     sims = th.rand((B,H,W,sH,sW),device=device).double()
-    sims = th.ones((B,H,W,sH,sW),device=device).double()
+    # sims = th.ones((B,H,W,sH,sW),device=device).double()
     # sims /= sims.sum((-1,-2),keepdim=True)
     gather_sims = SsnaGatherSims()
     sinds = get_indices(H,W,sH,sW,device)
@@ -66,9 +66,8 @@ def sample_sims(B,H,W,sH,sW,S,device):
     # print(pi[0,:,1,1])
     # print("-"*10)
     delta = th.mean((pi - pi0)**2)
-    print("[delta]: ",delta)
+    # print("[delta]: ",delta)
     assert delta.item()<1e-3
-
 
     return sims
 
@@ -77,16 +76,20 @@ def main():
     # -- config --
     device = "cuda:0"
     B,HD = 2,1
-    H,W = 16,16
-    sp_token = 2
-    kernel_size = 3
+
+    # H,W = 16,16
+    # sp_token = 2
+    # kernel_size = 3
     # H,W = 128,128
-    # H,W = 256,256
-    # sp_token = 14
-    # kernel_size = 9
+
+    H,W = 256,256
+    sp_token = 14
+    kernel_size = 3
+
     sH,sW = H//sp_token,W//sp_token
     dim = 3
-    scale = 10.
+    scale = 1.
+    attn_rw_version = "v0"
     th.manual_seed(123)
 
     # -- allocate data --
@@ -99,32 +102,34 @@ def main():
     img[...] = 1.
     # # img[:,1] = 0.5
     # # img[:,2] = 0.8
-    img[:,:,1,1] = 10.
+    img[:,:,1,1] = 2.
 
     # -- init layer --
     nat = NeighborhoodAttention2D(dim=dim, kernel_size=kernel_size,
                                   num_heads=HD, bias=False, qkv_bias=False,
                                   qk_scale=scale, use_proj=False)
     ssna = SoftSuperpixelNeighborhoodAttention(dim,HD,kernel_size,qk_scale=scale,
-                                               mask_labels=False,use_proj=False)
-    ssna_v2 = SoftSuperpixelNeighborhoodAttention_v2(dim,HD,kernel_size,qk_scale=scale,
-                                                     mask_labels=False,use_proj=False)
+                                               mask_labels=False,use_proj=False,
+                                               attn_rw_version=attn_rw_version)
+    # ssna_v2 = SoftSuperpixelNeighborhoodAttention_v2(dim,HD,kernel_size,qk_scale=scale,
+    #                                                  mask_labels=False,use_proj=False,
+    #                                                  attn_rw_version=attn_rw_version)
     nat = nat.to(device).double()
     ssna = ssna.to(device).double()
-    ssna_v2 = ssna_v2.to(device).double()
+    # ssna_v2 = ssna_v2.to(device).double()
 
     # -- set equal weights --
     mat = ssna.nat_agg.v.weight.data
     mat = th.eye(dim).to(device).double()
     ssna.nat_agg.v.weight.data = mat
-    ssna_v2.nat_agg.v.weight.data = mat
+    # ssna_v2.nat_agg.v.weight.data = mat
     nat.v.weight.data = mat
     print(ssna.nat_attn.qk.weight.data.shape)
     mat = th.zeros(2*dim,dim).to(device)
     mat[:dim,:] = th.eye(dim).to(device)
     mat[-dim:,:] = th.eye(dim).to(device)
     ssna.nat_attn.qk.weight.data = mat.double()
-    ssna_v2.nat_attn.qk.weight.data = mat.double()
+    # ssna_v2.nat_attn.qk.weight.data = mat.double()
     nat.qk.weight.data = mat.double()
 
     # mat = ssna.nat_attn.qk.weight.data
@@ -138,6 +143,8 @@ def main():
     sims0 = sims.clone().requires_grad_(True)
     fwd_fxn0 = lambda x,s: ssna(x,s)
     out0 = fwd_fxn0(img0,sims0)
+    loss = out0.abs().mean()
+    loss.backward()
     with TimeIt(timer,"fwd"):
         with MemIt(memer,"fwd"):
             out0 = fwd_fxn0(img0,sims0)
@@ -151,25 +158,28 @@ def main():
     # print(timer)
     # print(memer)
 
-    # -- benchmark [v2] --
-    img1 = img.clone().requires_grad_(True)
-    sims1 = sims.clone().requires_grad_(True)
-    fwd_fxn1 = lambda x,s: ssna_v2(x,s)
-    out1 = fwd_fxn1(img1,sims1)
-    with TimeIt(timer,"fwd_v2"):
-        with MemIt(memer,"fwd_v2"):
-            out1 = fwd_fxn1(img1,sims1)
-    img1.retain_grad()
-    sims1.retain_grad()
-    loss = out1.abs().mean()
-    with TimeIt(timer,"bwd_v2"):
-        with MemIt(memer,"bwd_v2"):
-            loss.backward()
+    # # -- benchmark [v2] --
+    # img1 = img.clone().requires_grad_(True)
+    # sims1 = sims.clone().requires_grad_(True)
+    # fwd_fxn1 = lambda x,s: ssna_v2(x,s)
+    # out1 = fwd_fxn1(img1,sims1)
+    # with TimeIt(timer,"fwd_v2"):
+    #     with MemIt(memer,"fwd_v2"):
+    #         out1 = fwd_fxn1(img1,sims1)
+    # img1.retain_grad()
+    # sims1.retain_grad()
+    # loss = out1.abs().mean()
+    # with TimeIt(timer,"bwd_v2"):
+    #     with MemIt(memer,"bwd_v2"):
+    #         loss.backward()
 
     # -- benchmark [v3] --
     img2 = img.clone().requires_grad_(True)
-    fwd_fxn2 = lambda x: nat(rearrange(x,'b c h w -> b h w c'))
+    s0,s1 = 'b c h w -> b h w c','b h w c -> b c h w'
+    fwd_fxn2 = lambda x: rearrange(nat(rearrange(x,s0)),s1)
     out2 = fwd_fxn2(img2)
+    loss = out2.abs().mean()
+    loss.backward()
     with TimeIt(timer,"fwd_nat"):
         with MemIt(memer,"fwd_nat"):
             out2 = fwd_fxn2(img2)
@@ -182,28 +192,26 @@ def main():
 
     print("-"*10)
     print(out0[0,0,0:5,0:5])
-    print(out1[0,0,0:5,0:5])
     print(out2[0,0,0:5,0:5])
     print("-"*10)
-    # print(out0[0,0,3:5,3:5])
-    # print(out1[0,0,3:5,3:5])
+    print(out0[0,0,3:8,3:8])
+    print(out2[0,0,3:8,3:8])
     print("-"*10)
     print(out0[0,0,8:12,8:12])
-    print(out1[0,0,8:12,8:12])
     print(out2[0,0,8:12,8:12])
     print("-"*10)
 
     print(timer)
     print(memer)
 
-    print(out0.shape,out1.shape)
-    print(th.mean((out0 - out1)**2))
-    print(th.mean((img1.grad - img0.grad)**2))
-    print(th.mean((sims1.grad - sims0.grad)**2))
-    assert(th.mean((out0 - out1)**2)<1e-5)
-    assert(th.mean((img1.grad - img0.grad)**2)<1e-5)
-    assert(th.mean((sims1.grad - sims0.grad)**2)<1e-5)
-    print("pass.")
+    print(out0.shape,out2.shape)
+    print(th.max((out0 - out2)**2))
+    print(th.max((img0.grad - img2.grad)**2))
+    # print(th.max((sims1.grad - sims0.grad)**2))
+    assert(th.max((out0 - out2)**2)<1e-3)
+    assert(th.max((img0.grad - img2.grad)**2)<1e-3)
+    # assert(th.mean((sims1.grad - sims0.grad)**2)<1e-5)
+    # print("pass.")
     return
 
     # -- check attn --

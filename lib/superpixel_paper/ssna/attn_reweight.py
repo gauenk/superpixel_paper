@@ -7,9 +7,13 @@ from torch import nn
 from torch.nn.functional import pad
 from torch.nn.init import trunc_normal_
 
+
 import torch
 from torch.autograd import Function
 import superpixel_cuda
+
+from einops import rearrange
+from .ssna_gather_sims import SsnaGatherSims
 
 class AttnReweight(nn.Module):
     """
@@ -29,23 +33,24 @@ class AttnReweight(nn.Module):
         super().__init__()
 
     def forward(self, attn, sims, sinds):
+
+        # -- P(L_j = s) --
         eps = 1e-10
         c = th.max(attn,dim=-1,keepdim=True).values
-        attn_rw = th.exp(attn-c)
-        # print(c.shape)
-        # print("*"*10)
-        # print(attn[0,0,0,0,:])
-        # print(attn[0,0,1,1,:])
-        # print("-"*10)
-        # print(attn_rw[0,0,0,0,:])
-        # print(attn_rw[0,0,1,1,:])
-        # exit()
-        attn_rw = AttnReweightFunction.apply(attn_rw,sims,sinds)
-        attn = attn_rw / (eps+th.sum(attn_rw,-1,keepdim=True))
+        attn = th.exp(attn-c)
+        attn = AttnReweightFunction.apply(attn,sims,sinds)
+        attn = attn / (eps+th.sum(attn,-1,keepdim=True))
 
-        # -- part 2 --
-        # attn = th.exp(attn[:,:,None] - c - th.log(eps+th.sum(attn_rw,-1)))
-        # attn = AttnReduceFunction.apply(attn,sims,sinds)
+        # -- reweight with P(L_i = s) --
+        gather_sims = SsnaGatherSims()
+        pi = gather_sims(sims,sinds)
+        pi = rearrange(pi,'b h w ni -> b 1 ni h w 1')
+        # print(pi.shape,attn.shape)
+        # pi = pi/pi.sum(2,keepdim=True)
+        attn = th.sum(pi * attn,2).contiguous()
+        # print("[v0] attn.shape: ",attn.shape)
+        # print(attn[0,0,0,0])
+        # print(attn[0,0,1,1])
 
         return attn
 

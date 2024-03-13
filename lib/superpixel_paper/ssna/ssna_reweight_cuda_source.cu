@@ -267,8 +267,10 @@ void ssna_reweight_backward_cuda(torch::Tensor d_attn_in,
     int NUM_PER_THREAD = 4;
 
     // -- block --
-    int nthreads_pix = 12;
+    int nthreads_pix = 14;
     int nthreads_ksize = 8;
+    // int nthreads_pix = 12;
+    // int nthreads_ksize = 8;
     int nblocks_pix = (num_pix-1)/nthreads_pix+1;
     int nblocks_ksize = (ksize_sq-1)/(NUM_PER_THREAD*nthreads_ksize)+1;
     dim3 nthreads(nthreads_pix,nthreads_ksize,nsuperpixels);

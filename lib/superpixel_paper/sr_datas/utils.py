@@ -4,6 +4,7 @@ import os
 from .benchmark import Benchmark
 from .div2k import DIV2K
 from .bsd500 import BSD500
+from .bsd500_seg import BSD500Seg
 from torch.utils.data import DataLoader
 
 
@@ -114,5 +115,37 @@ def create_datasets(args):
         selected = ''
         for i in range(len(valid_dataloaders)):
             selected += ", " + valid_dataloaders[i]['name']
-        print('select {} for evaluation! '.format(selected))
+        # print('select {} for evaluation! '.format(selected))
     return train_dataloader, valid_dataloaders
+
+
+def get_seg_dataset(args,shuffle_train=True,load_test=False):
+
+    if load_test:
+        dset = BSD500Seg(
+            os.path.join(args.data_path, 'BSD500'),
+            os.path.join(args.data_path, 'bsd500_seg_cache'),
+            "test",augment=args.data_augment,colors=args.colors,
+            patch_size=args.patch_size,repeat=args.data_repeat)
+        test_dataloader = DataLoader(dataset=dset, batch_size=1, shuffle=False)
+        return dset,test_dataloader
+
+
+    dset = BSD500Seg(
+        os.path.join(args.data_path, 'BSD500'),
+        os.path.join(args.data_path, 'bsd500_seg_cache'),
+        "train",augment=args.data_augment,colors=args.colors,
+        patch_size=args.patch_size,repeat=args.data_repeat)
+    train_dataloader = DataLoader(dataset=dset, num_workers=args.threads,
+                                  batch_size=args.batch_size,
+                                  shuffle=shuffle_train,
+                                  pin_memory=True, drop_last=True)
+    dset = BSD500Seg(
+        os.path.join(args.data_path, 'BSD500'),
+        os.path.join(args.data_path, 'bsd500_seg_cache'),
+        "val",augment=args.data_augment,colors=args.colors,
+        patch_size=args.patch_size,repeat=args.data_repeat)
+    valid_dataloader = DataLoader(dataset=dset, batch_size=1, shuffle=False)
+
+    return train_dataloader,valid_dataloader
+

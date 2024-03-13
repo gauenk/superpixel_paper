@@ -47,7 +47,6 @@ class UNet(nn.Module):
         self.conv = nn.Conv2d(
             in_channels=features, out_channels=out_channels, kernel_size=1
         )
-        print("softmax: ",softmax)
 
     def forward(self, x):
         enc1 = self.encoder1(x)
@@ -115,10 +114,10 @@ class UNet(nn.Module):
     def forward_block(self, x, vars, block):
         x, vars = self.forward_conv2d(x, vars)
         x = F.batch_norm(x, block[1].running_mean, block[1].running_var, vars[0], vars[1], training=True)
-        x = F.relu(x, inplace=True)
+        x = F.relu(x, inplace=False)
         x, vars = self.forward_conv2d(x, vars[2:])
         x = F.batch_norm(x, block[4].running_mean, block[4].running_var, vars[0], vars[1], training=True)
-        x = F.relu(x, inplace=True)
+        x = F.relu(x, inplace=False)
         return x, vars[2:]
 
     def forward_conv2d(self, x, vars):
@@ -152,7 +151,7 @@ class UNet(nn.Module):
                         ),
                     ),
                     (name + "norm1", nn.BatchNorm2d(num_features=features)),
-                    (name + "relu1", nn.ReLU(inplace=True)),
+                    (name + "relu1", nn.ReLU(inplace=False)),
                     (
                         name + "conv2",
                         nn.Conv2d(
@@ -165,7 +164,7 @@ class UNet(nn.Module):
                         ),
                     ),
                     (name + "norm2", nn.BatchNorm2d(num_features=features)),
-                    (name + "relu2", nn.ReLU(inplace=True)),
+                    (name + "relu2", nn.ReLU(inplace=False)),
                 ]
             )
         )

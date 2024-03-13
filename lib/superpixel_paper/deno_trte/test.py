@@ -77,7 +77,9 @@ def extract_defaults(_cfg):
         "upscale":2,"epochs":50,"denoise":False,
         "log_every":100,"test_every":1,"batch_size":8,"sigma":25,"colors":3,
         "log_path":"output/deno/train/","resume_uuid":None,"resume_flag":True,
-        "output_folder":"output/deno/test","save_output":False,"eval_ycb":True}
+        "output_folder":"output/deno/test","save_output":False,"eval_ycb":True,
+        "use_dataparallel":True,
+    }
     # defs = {
     #     "dim":12,"qk_dim":6,"mlp_dim":6,"stoken_size":[8],"block_num":1,
     #     "heads":1,"M":0.,"use_local":False,"use_inter":False,
@@ -148,7 +150,10 @@ def run(cfg):
         model = utils.import_module(import_str).create_model(cfg)
     except Exception:
         raise ValueError('not supported model type! or something')
-    model = nn.DataParallel(model).to(device)
+    if cfg.use_dataparallel:
+        model = nn.DataParallel(model).to(device)
+    else:
+        model = model.to(device)
 
     ## resume training
     start_epoch = 1

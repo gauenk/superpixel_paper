@@ -50,7 +50,8 @@ def create_model(args):
              "share_gen_sp":True,"heads":1,
              "use_state":False,"use_pwd":False,"use_dncnn":False,
              "unet_sm":True,"use_proj":True,"learn_attn_scale":False,
-             "detach_sims":False,"detach_learn_attn":False}
+             "detach_sims":False,"detach_learn_attn":False,
+             "use_lrelu":True,"attn_rw_version":"v0"}
     extract(args,pairs)
     # print({k:args[k] for k in pairs})
     return SimpleModel(colors=args.colors, dim=args.dim, block_num=args.block_num,
@@ -86,7 +87,9 @@ def create_model(args):
                        use_proj=args.use_proj,use_sna=args.use_sna,
                        learn_attn_scale=args.learn_attn_scale,
                        detach_sims=args.detach_sims,
-                       detach_learn_attn=args.detach_learn_attn)
+                       detach_learn_attn=args.detach_learn_attn,
+                       use_lrelu=args.use_lrelu,
+                       attn_rw_version=args.attn_rw_version)
 
 class SimpleModel(nn.Module):
     def __init__(self, colors=3, dim=40, block_num=8, heads=1, qk_dim=24, mlp_dim=72,
@@ -108,7 +111,8 @@ class SimpleModel(nn.Module):
                  share_gen_sp=True,use_state=False,
                  use_pwd=False,use_dncnn=True,unet_sm=True,
                  use_proj=True,use_sna=False,learn_attn_scale=False,
-                 detach_sims=False,detach_learn_attn=False):
+                 detach_sims=False,detach_learn_attn=False,use_lrelu=True,
+                 attn_rw_version="v0"):
         super(SimpleModel, self).__init__()
 
         # -- simplify stoken_size specification --
@@ -145,7 +149,7 @@ class SimpleModel(nn.Module):
         self.residual_shell = nn.Identity()
         self.lrelu_shell = nn.Identity()
         self.last_conv_shell = nn.Identity()
-
+        self.use_lrelu = use_lrelu
 
         # share_gen_sp = True
         self.share_gen_sp = share_gen_sp
@@ -190,7 +194,8 @@ class SimpleModel(nn.Module):
                                      share_gen_sp=self.gen_sp,unet_sm=unet_sm,
                                      use_proj=use_proj,learn_attn_scale=learn_attn_scale,
                                      detach_sims=detach_sims,
-                                     detach_learn_attn=detach_learn_attn))
+                                     detach_learn_attn=detach_learn_attn,
+                                     attn_rw_version=attn_rw_version))
             if self.use_midconvs:
                 conv_pad = conv_ksize//2
                 self.mid_convs.append(nn.Conv2d(dim, dim, conv_ksize, 1, conv_pad))
@@ -225,12 +230,15 @@ class SimpleModel(nn.Module):
             conv_pad = conv_ksize//2
             self.last_conv = nn.Conv2d(dim, 3, conv_ksize, 1, conv_pad)
             # self.last_conv = nn.Conv2d(dim, 3, 1, 1, 0)
-            self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+            if self.use_lrelu:
+                self.lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=False)
+            else:
+                self.lrelu = nn.Identity()
         else:
             self.last_conv = nn.Identity()
             self.lrelu = nn.Identity()
         num_parameters = sum(map(lambda x: x.numel(), self.parameters()))
-        print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
+        # print('#Params : {:<.4f} [K]'.format(num_parameters / 10 ** 3))
 
     # def freeze_scale_net(self):
     #     for block in self.blocks[i].named_Child:
@@ -324,7 +332,8 @@ class Block(nn.Module):
                  gensp_niters=3,use_skip=True,gen_sp_type="default",
                  use_weights=True,ssn_nftrs=3,share_gen_sp=None,
                  unet_sm=True,use_proj=True,learn_attn_scale=False,
-                 detach_sims=False,detach_learn_attn=False):
+                 detach_sims=False,detach_learn_attn=False,
+                 attn_rw_version="v0"):
         super(Block,self).__init__()
         self.layer_num = layer_num
         self.stoken_size = stoken_size
@@ -429,7 +438,8 @@ class Block(nn.Module):
                                    mask_labels=nsa_mask_labels,use_weights=use_weights,
                                    use_proj=use_proj,learn_attn_scale=attn_scale_net,
                                    detach_sims=detach_sims,
-                                   detach_learn_attn=detach_learn_attn)
+                                   detach_learn_attn=detach_learn_attn,
+                                   attn_rw_version=attn_rw_version)
             ssna_pos_enc = nn.Identity()
             # ssna_pos_enc = PositionalEncodingPermute2D(dim)
         else:
